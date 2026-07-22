@@ -59,8 +59,8 @@ val LAB_CATEGORIES = listOf(
         id = "demo.network.failure",
     ),
     LabCategory(
-        label = "Cart action",
-        id = "demo.cart.action",
+        label = "Document sync",
+        id = "demo.document.sync",
     ),
     LabCategory(
         label = "Runtime signal",
@@ -79,7 +79,7 @@ val LAB_WRITERS = listOf(
         level = OutboxRecordLevel.ERROR,
     ) { category, sequence, burstIndex ->
         """
-            {"message":"ERR0001 Add to cart failed","category":"$category","sequence":$sequence,"burst_index":$burstIndex,"source":"shopping_cart","target":"shopping_cart","action":"add_to_cart","failure_type":"api_failure","http_code":500,"path":"/cart/add"}
+            {"message":"SYNC001 Document sync failed","category":"$category","sequence":$sequence,"burst_index":$burstIndex,"source":"local_editor","target":"cloud_archive","action":"sync_document","failure_type":"api_failure","http_code":500,"path":"/v1/documents/sync"}
         """.trimIndent()
     },
     LabWriter(
