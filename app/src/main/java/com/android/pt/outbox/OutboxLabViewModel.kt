@@ -9,7 +9,6 @@ import io.github.phuongtran.androidoutbox.OutboxConfig
 import io.github.phuongtran.androidoutbox.OutboxDoorbellEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -26,6 +25,7 @@ class OutboxLabViewModel(
 ) : AndroidViewModel(application) {
 
     private val outbox: AndroidOutbox = AndroidOutboxFactory.create()
+    private val doorbells = OutboxLabDoorbellChannel(outbox)
     private var doorbellJob: Job? = null
 
     private val _uiState = MutableStateFlow(OutboxLabUiState())
@@ -304,11 +304,8 @@ class OutboxLabViewModel(
         if (doorbellJob?.isActive == true) {
             return
         }
-        doorbellJob = viewModelScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                val event = outbox.readNextDoorbell() ?: break
-                handleDoorbell(event)
-            }
+        doorbellJob = viewModelScope.launch {
+            doorbells.events().collect(::handleDoorbell)
         }
     }
 

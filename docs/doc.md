@@ -231,38 +231,68 @@ suspend fun drainSink(
 }
 ```
 
-In a real app, the drain runner should usually be driven by native doorbells:
+In a real app, the drain runner should usually be driven by a coroutine-facing
+doorbell `Flow`. Keep the blocking native read inside a channel implementation,
+then let the runner collect events:
 
 ```kotlin
-suspend fun runDoorbellDrainLoop(
+class BlockingOutboxDoorbellChannel(
+    outbox: AndroidOutbox,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : OutboxDoorbellChannel {
+
+    override fun events(): Flow<OutboxDoorbellEvent> {
+        return flow {
+            while (currentCoroutineContext().isActive) {
+                val event = outbox.readNextDoorbell() ?: break
+                emit(event)
+            }
+        }.flowOn(dispatcher)
+    }
+}
+```
+
+The sink runner can then stay boring and Kotlin-first:
+
+```kotlin
+fun CoroutineScope.launchDoorbellDrain(
+    outbox: AndroidOutbox,
+    doorbells: OutboxDoorbellChannel,
+    sink: OutboxSink,
+) = launch {
+    doorbells
+        .events()
+        .filter { event -> event == OutboxDoorbellEvent.DATA_AVAILABLE }
+        .collect {
+            drainAvailableBatches(
+                outbox = outbox,
+                sink = sink,
+            )
+        }
+}
+
+suspend fun drainAvailableBatches(
     outbox: AndroidOutbox,
     sink: OutboxSink,
 ) {
     while (true) {
-        val event = outbox.readNextDoorbell() ?: return
-        if (event != OutboxDoorbellEvent.DATA_AVAILABLE) {
-            continue
+        val batch = outbox.readNextBatch(
+            providerId = sink.providerId,
+            maxRecords = 32,
+            maxBytes = 64 * 1024,
+        ) ?: break
+
+        val posted = sink.send(batch.records)
+        if (!posted) {
+            // No ACK: native keeps this provider cursor unchanged.
+            // The same batch can be fetched again by a later retry.
+            break
         }
 
-        while (true) {
-            val batch = outbox.readNextBatch(
-                providerId = sink.providerId,
-                maxRecords = 32,
-                maxBytes = 64 * 1024,
-            ) ?: break
-
-            val posted = sink.send(batch.records)
-            if (!posted) {
-                // No ACK: native keeps this provider cursor unchanged.
-                // The same batch can be fetched again by a later retry.
-                break
-            }
-
-            outbox.ack(
-                providerId = sink.providerId,
-                ackToken = batch.ackToken,
-            )
-        }
+        outbox.ack(
+            providerId = sink.providerId,
+            ackToken = batch.ackToken,
+        )
     }
 }
 ```
