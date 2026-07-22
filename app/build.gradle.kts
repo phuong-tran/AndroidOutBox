@@ -38,6 +38,11 @@ android {
 }
 
 dependencies {
+    // The sample app uses the local project for fast iteration inside this repo.
+    // Real consumers should use the Maven artifact:
+    // implementation("io.github.phuongtran:android-outbox:1.3.1")
+    implementation(project(":android-outbox"))
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
