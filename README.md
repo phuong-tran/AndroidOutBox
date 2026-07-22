@@ -19,9 +19,17 @@ WorkManager, or any backend.
 
 The app decides where, when, and how to sink the data.
 
-## Installation
+## Distribution Model
 
-AndroidOutBox is intended to be consumed as a Maven AAR.
+This repository contains both the source code and the static Maven repository
+used by consumers. The published artifacts live under the checked-in `maven/`
+directory, following the normal Maven repository layout.
+
+There is no separate SDK backend, package registry, or hidden download step. A
+consumer points Gradle at the raw GitHub `maven/` directory and depends on the
+AAR by Maven coordinate.
+
+## Installation
 
 Add the static Maven repository in `settings.gradle.kts` or the application
 Gradle configuration:
@@ -44,10 +52,24 @@ Then add the dependency:
 implementation("io.github.phuongtran:android-outbox:1.3.1")
 ```
 
-The published AAR includes the Kotlin API, Gradle metadata, sources, and the
-native `libandroid_outbox.so` binaries for Android ABIs.
+The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
+for Android ABIs. Gradle metadata, POM metadata, source jar, and checksums are
+also committed under `maven/`.
 
 ## Static Maven Publishing
+
+To regenerate the static Maven repository under `maven/`:
+
+```bash
+./gradlew :android-outbox:publishReleasePublicationToGitHubStaticMavenRepository --console=plain
+```
+
+Commit the generated `maven/` directory and push it to GitHub. After that,
+consumers can resolve the artifact from:
+
+```text
+https://raw.githubusercontent.com/phuong-tran/AndroidOutBox/main/maven
+```
 
 For local-only integration testing, publish to Maven local and consume the same
 coordinate from `mavenLocal()`:
@@ -56,22 +78,13 @@ coordinate from `mavenLocal()`:
 ./gradlew :android-outbox:publishReleasePublicationToMavenLocal --console=plain
 ```
 
-```kotlin
-repositories {
-    mavenLocal()
-    google()
-    mavenCentral()
-}
-```
+Release checklist:
 
-To publish the static Maven repository into the local `maven/` directory:
-
-```bash
-./gradlew :android-outbox:publishReleasePublicationToGitHubStaticMavenRepository --console=plain
-```
-
-Commit the generated `maven/` directory and push it to GitHub. Consumers resolve
-the AAR from the raw GitHub URL shown in the installation section.
+- update `VERSION_NAME` in `gradle.properties`
+- run the static Maven publish task
+- verify the generated AAR contains `libandroid_outbox.so` for all Android ABIs
+- commit source changes and the generated `maven/` files together
+- push to GitHub
 
 ## Kotlin API
 
@@ -118,7 +131,7 @@ if (batch != null) {
 
 ## Modules
 
-- `:android-outbox`: publishable Maven library module. This is the core.
+- `:android-outbox`: publishable Maven AAR module. This is the core.
 - `:app`: sample playground for manual Android experiments. It uses the local
   project dependency only so contributors can iterate quickly inside this repo.
   Real consumers should use the Maven coordinate above.
