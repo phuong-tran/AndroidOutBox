@@ -1,0 +1,401 @@
+def hostTestBuildDir = layout.buildDirectory.dir("nativeHostTest")
+def hostTestBinary = hostTestBuildDir.map { it.file("observability_logger_core_test").asFile }
+def hostStressTestBinary = hostTestBuildDir.map { it.file("observability_logger_core_stress_test").asFile }
+def isWindowsHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("windows")
+def isMacHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("mac")
+def hostCompiler = providers.environmentVariable("CC").orElse("cc").get()
+def hostCxxCompiler = providers.environmentVariable("CXX").orElse("c++").get()
+def hostJniBuildDir = layout.buildDirectory.dir("nativeHostJniTest")
+def hostJniLibraryName = isMacHost ? "libobservability_logger_host_jni.dylib"
+        : "libobservability_logger_host_jni.so"
+def hostJniLibrary = hostJniBuildDir.map { it.file(hostJniLibraryName).asFile }
+def hostJniControlObject = hostJniBuildDir.map { it.file("observability_logger_control.o").asFile }
+def hostJniCoreObject = hostJniBuildDir.map { it.file("observability_logger_core.o").asFile }
+def hostJniFrameObject = hostJniBuildDir.map { it.file("observability_logger_frame.o").asFile }
+def hostJniQueueObject = hostJniBuildDir.map { it.file("observability_logger_queue.o").asFile }
+def hostJniSpoolObject = hostJniBuildDir.map { it.file("observability_logger_spool.o").asFile }
+def hostJniWriterObject = hostJniBuildDir.map { it.file("observability_logger_writer.o").asFile }
+def hostJniProductionBridgeObject = hostJniBuildDir.map { it.file("observability_logger_jni.o").asFile }
+def hostJniTestBridgeObject = hostJniBuildDir.map { it.file("observability_logger_host_jni_test.o").asFile }
+def jniJavaHome = providers.systemProperty("java.home").get()
+def jniIncludeDir = file("${jniJavaHome}/include")
+def jniPlatformIncludeDir = file("${jniJavaHome}/include/${isMacHost ? "darwin" : "linux"}")
+def canBuildHostJni = !isWindowsHost && jniIncludeDir.exists() && jniPlatformIncludeDir.exists()
+
+// Host JNI integration is opt-in because it builds and loads a host shared
+// library from the same production C/JNI objects used by Android, then reflects
+// raw file descriptors for JVM-only pipe testing. This keeps the test close to
+// the real app path without requiring an emulator or instrumented test run.
+// Run it explicitly with:
+// ./gradlew :android-outbox:testDebugUnitTest \
+//   --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
+//   -PandroidOutboxHostJni=true \
+//   --console=plain
+def isHostJniEnabled = providers.gradleProperty("androidOutboxHostJni")
+        .map { it.toBoolean() }
+        .orElse(false)
+
+// Stress is an opt-in diagnostic target, not part of CI smoke tests. It is
+// intentionally gated because it writes many records and its runtime depends on
+// host CPU and filesystem behavior.
+// Run it explicitly with:
+// ./gradlew :android-outbox:testNativeHostStress \
+//   -PandroidOutboxStress=true \
+//   --console=plain
+def isNativeStressEnabled = providers.gradleProperty("androidOutboxStress")
+        .map { it.toBoolean() }
+        .orElse(false)
+def nativeStressWorkers = providers.gradleProperty("androidOutboxStressWorkers").orElse("8")
+def nativeStressRecordsPerWorker = providers.gradleProperty("androidOutboxStressRecordsPerWorker")
+        .orElse("20000")
+def nativeStressQueueCapacity = providers.gradleProperty("androidOutboxStressQueueCapacity")
+        .orElse("1024")
+def nativeStressMaxRecordBytes = providers.gradleProperty("androidOutboxStressMaxRecordBytes")
+        .orElse("512")
+
+def nativeMainSources = [
+        file("src/main/cpp/observability_logger_control.c"),
+        file("src/main/cpp/observability_logger_core.c"),
+        file("src/main/cpp/observability_logger_frame.c"),
+        file("src/main/cpp/observability_logger_queue.c"),
+        file("src/main/cpp/observability_logger_spool.c"),
+        file("src/main/cpp/observability_logger_writer.c"),
+]
+def nativeMainHeaders = [
+        file("src/main/cpp/observability_logger_control.h"),
+        file("src/main/cpp/observability_logger_core.h"),
+        file("src/main/cpp/observability_logger_frame.h"),
+        file("src/main/cpp/observability_logger_internal.h"),
+        file("src/main/cpp/observability_logger_queue.h"),
+        file("src/main/cpp/observability_logger_spool.h"),
+        file("src/main/cpp/observability_logger_writer.h"),
+]
+def nativeHostCompilerArgs = [
+        "-std=c17",
+        "-D_GNU_SOURCE",
+        "-D_DARWIN_C_SOURCE",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pthread",
+        "-I${projectDir}/src/main/cpp",
+]
+def nativeHostJniCCompilerArgs = nativeHostCompilerArgs + ["-fPIC"]
+def nativeHostJniCxxCompilerArgs = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fPIC",
+        "-pthread",
+        "-I${projectDir}/src/main/cpp",
+        "-I${jniIncludeDir}",
+        "-I${jniPlatformIncludeDir}",
+]
+
+tasks.register("compileNativeHostTest", Exec) {
+    group = "verification"
+    description = "Compiles host-side C tests for the AndroidOutBox core."
+    onlyIf {
+        !isWindowsHost
+    }
+
+    inputs.files(nativeMainSources, nativeMainHeaders, file("src/hostTest/c/observability_logger_core_test.c"))
+    outputs.file(hostTestBinary)
+
+    doFirst {
+        hostTestBuildDir.get().asFile.mkdirs()
+    }
+    commandLine(
+            [hostCompiler] +
+                    nativeHostCompilerArgs +
+                    nativeMainSources.collect { it.absolutePath } +
+                    [
+                            file("src/hostTest/c/observability_logger_core_test.c").absolutePath,
+                            "-o",
+                            hostTestBinary.get().absolutePath,
+                    ],
+    )
+}
+
+tasks.register("testNativeHost", Exec) {
+    group = "verification"
+    description = "Runs host-side C tests for the AndroidOutBox core."
+    dependsOn("compileNativeHostTest")
+    onlyIf {
+        !isWindowsHost
+    }
+
+    commandLine(hostTestBinary.get().absolutePath)
+}
+
+tasks.register("compileNativeHostStressTest", Exec) {
+    group = "verification"
+    description = "Compiles the opt-in native stress test for the AndroidOutBox core."
+    onlyIf {
+        !isWindowsHost && isNativeStressEnabled.get()
+    }
+
+    inputs.files(
+            nativeMainSources,
+            nativeMainHeaders,
+            file("src/hostTest/c/observability_logger_core_stress_test.c"),
+    )
+    outputs.file(hostStressTestBinary)
+
+    doFirst {
+        hostTestBuildDir.get().asFile.mkdirs()
+    }
+    commandLine(
+            [hostCompiler] +
+                    nativeHostCompilerArgs +
+                    nativeMainSources.collect { it.absolutePath } +
+                    [
+                            file("src/hostTest/c/observability_logger_core_stress_test.c").absolutePath,
+                            "-o",
+                            hostStressTestBinary.get().absolutePath,
+                    ],
+    )
+}
+
+tasks.register("testNativeHostStress", Exec) {
+    group = "verification"
+    description = "Runs the opt-in native stress test. Enable with -PandroidOutboxStress=true."
+    dependsOn("compileNativeHostStressTest")
+    onlyIf {
+        !isWindowsHost && isNativeStressEnabled.get()
+    }
+
+    commandLine(
+            hostStressTestBinary.get().absolutePath,
+            nativeStressWorkers.get(),
+            nativeStressRecordsPerWorker.get(),
+            nativeStressQueueCapacity.get(),
+            nativeStressMaxRecordBytes.get(),
+    )
+}
+
+def registerHostJniCObject = { String taskName,
+                               String taskDescription,
+                               File sourceFile,
+                               outputFile,
+                               inputFiles ->
+    tasks.register(taskName, Exec) {
+        group = "verification"
+        description = taskDescription
+        onlyIf {
+            canBuildHostJni && isHostJniEnabled.get()
+        }
+
+        inputs.files(inputFiles)
+        outputs.file(outputFile)
+
+        doFirst {
+            hostJniBuildDir.get().asFile.mkdirs()
+        }
+        commandLine(
+                [hostCompiler] +
+                        nativeHostJniCCompilerArgs +
+                        [
+                                "-c",
+                                sourceFile.absolutePath,
+                                "-o",
+                                outputFile.get().absolutePath,
+                        ],
+        )
+    }
+}
+
+def registerHostJniCxxObject = { String taskName,
+                                 String taskDescription,
+                                 File sourceFile,
+                                 outputFile,
+                                 inputFiles ->
+    tasks.register(taskName, Exec) {
+        group = "verification"
+        description = taskDescription
+        onlyIf {
+            canBuildHostJni && isHostJniEnabled.get()
+        }
+
+        inputs.files(inputFiles)
+        outputs.file(outputFile)
+
+        doFirst {
+            hostJniBuildDir.get().asFile.mkdirs()
+        }
+        commandLine(
+                [hostCxxCompiler] +
+                        nativeHostJniCxxCompilerArgs +
+                        [
+                                "-c",
+                                sourceFile.absolutePath,
+                                "-o",
+                                outputFile.get().absolutePath,
+                        ],
+        )
+    }
+}
+
+registerHostJniCObject(
+        "compileNativeHostJniCoreObject",
+        "Compiles the AndroidOutBox C core for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_core.c"),
+        hostJniCoreObject,
+        [
+                file("src/main/cpp/observability_logger_control.h"),
+                file("src/main/cpp/observability_logger_core.c"),
+                file("src/main/cpp/observability_logger_core.h"),
+                file("src/main/cpp/observability_logger_frame.h"),
+                file("src/main/cpp/observability_logger_internal.h"),
+                file("src/main/cpp/observability_logger_queue.h"),
+                file("src/main/cpp/observability_logger_spool.h"),
+                file("src/main/cpp/observability_logger_writer.h"),
+        ],
+)
+registerHostJniCObject(
+        "compileNativeHostJniControlObject",
+        "Compiles the AndroidOutBox control plane for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_control.c"),
+        hostJniControlObject,
+        [
+                file("src/main/cpp/observability_logger_control.c"),
+                file("src/main/cpp/observability_logger_control.h"),
+                file("src/main/cpp/observability_logger_core.h"),
+                file("src/main/cpp/observability_logger_frame.h"),
+                file("src/main/cpp/observability_logger_internal.h"),
+                file("src/main/cpp/observability_logger_spool.h"),
+        ],
+)
+registerHostJniCObject(
+        "compileNativeHostJniFrameObject",
+        "Compiles the AndroidOutBox frame helpers for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_frame.c"),
+        hostJniFrameObject,
+        [
+                file("src/main/cpp/observability_logger_frame.c"),
+                file("src/main/cpp/observability_logger_frame.h"),
+        ],
+)
+registerHostJniCObject(
+        "compileNativeHostJniQueueObject",
+        "Compiles the AndroidOutBox queue helpers for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_queue.c"),
+        hostJniQueueObject,
+        [
+                file("src/main/cpp/observability_logger_internal.h"),
+                file("src/main/cpp/observability_logger_queue.c"),
+                file("src/main/cpp/observability_logger_queue.h"),
+        ],
+)
+registerHostJniCObject(
+        "compileNativeHostJniSpoolObject",
+        "Compiles the AndroidOutBox spool helpers for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_spool.c"),
+        hostJniSpoolObject,
+        [
+                file("src/main/cpp/observability_logger_frame.h"),
+                file("src/main/cpp/observability_logger_internal.h"),
+                file("src/main/cpp/observability_logger_spool.c"),
+                file("src/main/cpp/observability_logger_spool.h"),
+        ],
+)
+registerHostJniCObject(
+        "compileNativeHostJniWriterObject",
+        "Compiles the AndroidOutBox writer loop for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_writer.c"),
+        hostJniWriterObject,
+        [
+                file("src/main/cpp/observability_logger_frame.h"),
+                file("src/main/cpp/observability_logger_internal.h"),
+                file("src/main/cpp/observability_logger_queue.h"),
+                file("src/main/cpp/observability_logger_spool.h"),
+                file("src/main/cpp/observability_logger_writer.c"),
+                file("src/main/cpp/observability_logger_writer.h"),
+        ],
+)
+registerHostJniCxxObject(
+        "compileNativeHostJniProductionBridgeObject",
+        "Compiles the production JNI bridge for the host JNI shared library.",
+        file("src/main/cpp/observability_logger_jni.cpp"),
+        hostJniProductionBridgeObject,
+        [
+                file("src/main/cpp/observability_logger_core.h"),
+                file("src/main/cpp/observability_logger_jni.cpp"),
+        ],
+)
+registerHostJniCxxObject(
+        "compileNativeHostJniTestBridgeObject",
+        "Compiles the host-only JNI bridge for JVM integration tests.",
+        file("src/hostTest/c/observability_logger_host_jni_test.cpp"),
+        hostJniTestBridgeObject,
+        [
+                file("src/main/cpp/observability_logger_core.h"),
+                file("src/hostTest/c/observability_logger_host_jni_test.cpp"),
+        ],
+)
+
+tasks.register("compileNativeHostJniTestLibrary", Exec) {
+    group = "verification"
+    description = "Builds a host-loadable JNI shared library for JVM integration tests."
+    dependsOn(
+            "compileNativeHostJniControlObject",
+            "compileNativeHostJniCoreObject",
+            "compileNativeHostJniFrameObject",
+            "compileNativeHostJniQueueObject",
+            "compileNativeHostJniSpoolObject",
+            "compileNativeHostJniWriterObject",
+            "compileNativeHostJniProductionBridgeObject",
+            "compileNativeHostJniTestBridgeObject",
+    )
+    onlyIf {
+        canBuildHostJni && isHostJniEnabled.get()
+    }
+
+    inputs.files(
+            hostJniControlObject,
+            hostJniCoreObject,
+            hostJniFrameObject,
+            hostJniQueueObject,
+            hostJniSpoolObject,
+            hostJniWriterObject,
+            hostJniProductionBridgeObject,
+            hostJniTestBridgeObject,
+    )
+    outputs.file(hostJniLibrary)
+
+    commandLine(
+            hostCxxCompiler,
+            isMacHost ? "-dynamiclib" : "-shared",
+            "-pthread",
+            hostJniControlObject.get().absolutePath,
+            hostJniCoreObject.get().absolutePath,
+            hostJniFrameObject.get().absolutePath,
+            hostJniQueueObject.get().absolutePath,
+            hostJniSpoolObject.get().absolutePath,
+            hostJniWriterObject.get().absolutePath,
+            hostJniProductionBridgeObject.get().absolutePath,
+            hostJniTestBridgeObject.get().absolutePath,
+            "-o",
+            hostJniLibrary.get().absolutePath,
+    )
+}
+
+tasks.matching { task ->
+    task.name == "testDebugUnitTest"
+}.configureEach { task ->
+    if (canBuildHostJni && isHostJniEnabled.get()) {
+        task.dependsOn("compileNativeHostJniTestLibrary")
+        task.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED")
+        task.testLogging {
+            events "passed", "skipped", "failed", "standardOut", "standardError"
+            showStandardStreams = true
+        }
+        // Host JNI is diagnostic-only, so explicit runs should not be hidden by
+        // a stale Gradle test result.
+        task.outputs.upToDateWhen { false }
+        task.doFirst {
+            systemProperty("androidoutbox.hostJniLibrary", hostJniLibrary.get().absolutePath)
+        }
+    }
+}
