@@ -23,8 +23,8 @@ The app decides where, when, and how to sink the data.
 
 AndroidOutBox is intended to be consumed as a Maven AAR.
 
-Add the Maven repository in `settings.gradle.kts` or the application Gradle
-configuration:
+Add the static Maven repository in `settings.gradle.kts` or the application
+Gradle configuration:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -32,15 +32,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
-            url = uri("https://maven.pkg.github.com/phuong-tran/AndroidOutBox")
-            credentials {
-                username = providers.gradleProperty("gpr.user")
-                    .orElse(providers.environmentVariable("GITHUB_ACTOR"))
-                    .orNull
-                password = providers.gradleProperty("gpr.key")
-                    .orElse(providers.environmentVariable("GITHUB_TOKEN"))
-                    .orNull
-            }
+            url = uri("https://raw.githubusercontent.com/phuong-tran/AndroidOutBox/main/maven")
         }
     }
 }
@@ -55,7 +47,7 @@ implementation("io.github.phuongtran:android-outbox:1.3.1")
 The published AAR includes the Kotlin API, Gradle metadata, sources, and the
 native `libandroid_outbox.so` binaries for Android ABIs.
 
-## Maven Publishing
+## Static Maven Publishing
 
 For local-only integration testing, publish to Maven local and consume the same
 coordinate from `mavenLocal()`:
@@ -72,16 +64,14 @@ repositories {
 }
 ```
 
-To publish to GitHub Packages, provide credentials through environment
-variables or Gradle properties:
+To publish the static Maven repository into the local `maven/` directory:
 
 ```bash
-GITHUB_ACTOR=<github-user> \
-GITHUB_TOKEN=<github-token> \
-./gradlew :android-outbox:publishReleasePublicationToGitHubPackagesRepository --console=plain
+./gradlew :android-outbox:publishReleasePublicationToGitHubStaticMavenRepository --console=plain
 ```
 
-The token needs permission to publish packages for this repository.
+Commit the generated `maven/` directory and push it to GitHub. Consumers resolve
+the AAR from the raw GitHub URL shown in the installation section.
 
 ## Kotlin API
 
