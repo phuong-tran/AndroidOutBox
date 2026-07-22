@@ -129,6 +129,11 @@ if (batch != null) {
 - no hidden network
 - no background work unless the app opts in
 
+## Documentation
+
+Read [docs/doc.md](docs/doc.md) for the design rationale, intended use cases,
+doorbell/read/ACK model, and crash logging boundary.
+
 ## Modules
 
 - `:android-outbox`: publishable Maven AAR module. This is the core.
