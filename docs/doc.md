@@ -9,6 +9,7 @@
 - [Runtime Flow](#runtime-flow)
 - [Delivery Guarantees](#delivery-guarantees)
 - [How Outbox Files Work](#how-outbox-files-work)
+- [Configuration Semantics](#configuration-semantics)
 - [Storage Directory](#storage-directory)
 - [Process Ownership](#process-ownership)
 - [Network Sinks](#network-sinks)
@@ -248,6 +249,51 @@ This is still bounded best-effort delivery. ACK controls consumer progress, not
 infinite retention. If old segments must be deleted because of retention limits,
 disk pressure, cleanup, or corruption handling, unacknowledged records in those
 segments are lost for any provider that has not advanced past them.
+
+## Configuration Semantics
+
+AndroidOutBox configuration values are protection boundaries, not delivery
+promises. They define how much native memory and disk space the outbox is
+allowed to use before it starts rejecting or deleting records to protect the
+application.
+
+| Parameter | Default | Purpose | When the limit is reached |
+|---|---:|---|---|
+| `spoolDirectoryPath` | Required | App-private directory for spool segments and provider cursors. | If the directory cannot be created or opened, `start()` fails and the outbox stays stopped. |
+| `defaultProviderId` | `default` | Cursor id used when a caller does not pass an explicit provider id. | It must match the provider id format. Invalid ids are rejected by `OutboxConfig`. |
+| `queueCapacity` | `256` | Maximum number of records that may wait in native memory before the writer persists them. | When the queue is full, new writes are rejected, `write()` returns `false`, and pressure stats are updated. |
+| `maxRecordBytes` | `4096` | Maximum payload size for one record. | Oversized records are rejected before enqueueing. AndroidOutBox does not split or partially write a record. |
+| `maxSegmentSizeBytes` | `524288` | Approximate size at which the active spool segment rotates. | The writer rolls to a new segment instead of growing the active segment indefinitely. |
+| `maxArchivedSegments` | `3` | Number of rolled segments retained beside the active segment. | Oldest archived segments are deleted when the retained segment count exceeds the configured budget. |
+
+The approximate disk budget is:
+
+```text
+maxSegmentSizeBytes * (maxArchivedSegments + 1)
+```
+
+The `+ 1` is the active segment. For the defaults, AndroidOutBox keeps roughly
+`512KB * 4`, or about `2MB`, before normal segment cleanup can delete old
+segments.
+
+`queueCapacity` protects the hot path and native memory. A larger queue can
+absorb longer bursts, but it reserves more native memory because payload slots
+are allocated according to `maxRecordBytes`.
+
+`maxRecordBytes` protects the outbox from becoming a raw payload dump. Keep
+records compact and sanitized. Prefer summaries, ids, error codes, paths, and
+small metadata over raw request or response bodies.
+
+`maxSegmentSizeBytes` and `maxArchivedSegments` protect disk usage. Rotation
+creates new segments; retention cleanup removes old ones. Reading a batch does
+not delete segment files. ACK only moves a provider cursor. Segment deletion is
+driven by bounded retention, not by a read call.
+
+If a provider cursor points into a segment that has already been removed, old
+unacknowledged records from that segment are no longer available to that
+provider. The provider should continue from the next retained records. This is
+intentional: a slow or broken sink must not force the app to keep growing disk
+usage forever.
 
 ## Storage Directory
 
