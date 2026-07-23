@@ -74,7 +74,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.2")
+implementation("io.github.phuongtran:android-outbox:1.3.3")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
