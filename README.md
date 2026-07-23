@@ -129,17 +129,45 @@ Keep heavy stress tests in the host-native test tasks. UI tests are useful for
 manual behavior checks, but they should not become the primary performance
 benchmark for the native outbox.
 
-## Useful Commands
+## Testing
+
+Run the regular Kotlin/JVM unit tests:
 
 ```bash
-./gradlew :android-outbox:testNativeHost
-./gradlew :android-outbox:testDebugUnitTest
-./gradlew :android-outbox:assembleDebug
-./gradlew :app:assembleDebug --console=plain
+./gradlew :android-outbox:testDebugUnitTest --console=plain
 ```
 
-Native stress tests are opt-in:
+Run the host-native tests for the C core and host JNI bridge:
+
+```bash
+./gradlew :android-outbox:testNativeHost --console=plain
+```
+
+These host tests compile and execute the native outbox core on the development
+machine. They are useful for validating cursor/ACK behavior, file persistence,
+provider isolation, and JNI command framing without installing the sample app on
+a device.
+
+Native stress tests are opt-in so normal development and CI do not pay the cost
+unless explicitly requested:
 
 ```bash
 ./gradlew :android-outbox:testNativeHostStress -PandroidOutboxStress=true --console=plain
+```
+
+Use the stress task when changing queue, file, cursor, frame, or ACK logic and
+you want a heavier confidence check.
+
+## Build
+
+Build the library module:
+
+```bash
+./gradlew :android-outbox:assembleDebug --console=plain
+```
+
+Build the sample app:
+
+```bash
+./gradlew :app:assembleDebug --console=plain
 ```
