@@ -24,7 +24,10 @@ interface AndroidOutbox : OutboxDoorbellReader, OutboxRecordStore {
     ): Boolean
 
     /**
-     * Waits until records already accepted by the native writer are persisted.
+     * Waits until records already accepted by the native writer have been
+     * drained from the in-memory queue and written to the active segment file.
+     *
+     * This is a local writer barrier, not a database-grade durability promise.
      */
     fun flush(): Boolean
 

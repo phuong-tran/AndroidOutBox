@@ -7,6 +7,9 @@
 - [When Not To Use It](#when-not-to-use-it)
 - [Core Model](#core-model)
 - [Runtime Flow](#runtime-flow)
+- [Delivery Guarantees](#delivery-guarantees)
+- [Storage Directory](#storage-directory)
+- [Process Ownership](#process-ownership)
 - [Network Sinks](#network-sinks)
 - [Can It Log Crashes?](#can-it-log-crashes)
 - [Crash Logging Pattern](#crash-logging-pattern)
@@ -17,6 +20,11 @@
 
 AndroidOutBox exists for apps that want app-owned event durability without
 adopting a full observability SDK.
+
+It is a bounded best-effort local outbox, not a database transactional outbox.
+It does not provide an atomic boundary between updating application data and
+publishing an event. Its job is narrower: accept app-owned records, keep recent
+records locally when resources permit, and let the app drain them later.
 
 Many SDKs try to solve several problems at once: crash reporting, tracing,
 network instrumentation, breadcrumbs, background delivery, device contexts, and
@@ -32,6 +40,11 @@ AndroidOutBox takes a narrower position:
 
 The goal is not to replace every observability tool. The goal is to provide a
 small durable handoff point between app code and any later consumer.
+
+AndroidOutBox protects the application first. Records may be dropped under
+memory pressure, disk limits, retention limits, storage cleanup, corruption, or
+other runtime constraints. Application behavior must never depend on an outbox
+write succeeding.
 
 ## When To Use It
 
@@ -140,17 +153,80 @@ The token is native-owned and opaque. Kotlin should pass it back as-is.
 The expected runtime flow is doorbell-first:
 
 1. Start AndroidOutBox with an app-private spool directory.
-2. App code writes compact records.
-3. Native persists records to the bounded spool.
-4. Native rings a doorbell such as `DATA_AVAILABLE`.
-5. Kotlin wakes up and reads a batch.
-6. The app-owned transporter sends the batch wherever it wants.
-7. On success, Kotlin ACKs the batch.
-8. On failure, Kotlin does not ACK; the same records remain pending.
+2. Drain once immediately after startup to pick up records left from a previous
+   process lifetime.
+3. App code writes compact records.
+4. Native persists records to the bounded spool.
+5. Native rings a doorbell such as `DATA_AVAILABLE`.
+6. Kotlin wakes up and reads a batch.
+7. The app-owned transporter sends the batch wherever it wants.
+8. On success, Kotlin ACKs the batch.
+9. On failure, Kotlin does not ACK; the same records remain pending while they
+   are still retained.
 
 The library does not start a background service or schedule WorkManager by
 itself. If an app wants background draining, the app should wire that policy
 above AndroidOutBox.
+
+Doorbells are wake-up hints, not the source of truth. They may be coalesced or
+missed across lifecycle boundaries. The durable spool is authoritative, so a
+consumer should always perform an initial drain after `start()`, then use
+doorbells to wake future drains.
+
+## Delivery Guarantees
+
+AndroidOutBox provides retryable ACK-based delivery while records remain
+retained. It does not provide exactly-once delivery or indefinite retention.
+
+| Situation | Result |
+|---|---|
+| `write()` cannot hand the record to native | The call returns `false`; the app flow should continue. |
+| Native queue is full | The record may be dropped and pressure counters are updated. |
+| A record is accepted but the process dies before the writer drains it | The record may be lost. |
+| A record is written to the spool and not ACKed | A later read can return it again while it is still retained. |
+| Network send succeeds but the app dies before ACK | The same batch may be delivered again. Consumers should tolerate duplicates. |
+| ACK succeeds | The provider cursor commits past the loaded batch. |
+| A sink fails to send | Do not ACK; retry later while the record remains retained. |
+| Retention deletes old segments before a provider ACKs them | Those old records are lost for that provider. |
+| A doorbell is missed | Initial/manual drain can still find retained records. |
+
+ACK is the commit signal. Reading a batch is a peek; it does not remove or
+commit the batch.
+
+Provider cursors isolate delivery progress, not retention. Multiple provider
+ids can advance independently, but all providers still share the same bounded
+spool budget. A slow provider can lose old unacknowledged records when retention
+removes old segments to protect application resources.
+
+## Storage Directory
+
+Use an app-private directory for `OutboxConfig.spoolDirectoryPath`.
+
+Recommended defaults:
+
+- `context.noBackupFilesDir.resolve("android-outbox")` for local records that
+  should survive normal cache cleanup but should not be restored to a new
+  device by Android Auto Backup.
+- `context.filesDir.resolve("android-outbox")` for app-private records that
+  should survive normal cache cleanup.
+- `context.cacheDir.resolve("android-outbox")` only when records may be
+  discarded by the operating system.
+
+`cacheDir` is valid for disposable telemetry, but the OS may clear it. Do not
+interpret process-restart survival as a promise that records survive all storage
+cleanup.
+
+## Process Ownership
+
+One spool directory should be owned by one Android process.
+
+AndroidOutBox does not currently define inter-process locking semantics for two
+processes writing, rotating, reading, ACKing, and cleaning the same spool
+directory. Multi-process apps should either:
+
+- start AndroidOutBox in only one process, or
+- use a separate spool directory per process, for example
+  `android-outbox/main` and `android-outbox/remote`.
 
 ## Network Sinks
 
@@ -260,6 +336,11 @@ fun CoroutineScope.launchDoorbellDrain(
     doorbells: OutboxDoorbellChannel,
     sink: OutboxSink,
 ) = launch {
+    drainAvailableBatches(
+        outbox = outbox,
+        sink = sink,
+    )
+
     doorbells
         .events()
         .filter { event -> event == OutboxDoorbellEvent.DATA_AVAILABLE }
@@ -300,7 +381,7 @@ suspend fun drainAvailableBatches(
 The important chain is:
 
 ```text
-doorbell -> fetchNextBatch -> post to network sink -> ack()
+initial drain -> doorbell -> fetchNextBatch -> post to network sink -> ack()
 ```
 
 If `post` fails, stop the drain loop for that sink and do not ACK. Retry policy

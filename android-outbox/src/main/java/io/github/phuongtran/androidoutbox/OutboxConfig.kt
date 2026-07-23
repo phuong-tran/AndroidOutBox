@@ -7,9 +7,10 @@ package io.github.phuongtran.androidoutbox
  * bursts and preserve recent failure context, not become long-term storage.
  *
  * @property spoolDirectoryPath App-private directory where native segment and
- * cursor files are stored. Prefer cache/internal storage. The logger owns files
- * inside this directory and may delete old segment files to enforce
- * [maxArchivedSegments].
+ * cursor files are stored. Prefer `noBackupFilesDir` or `filesDir` when pending
+ * records should survive normal cache cleanup. Use `cacheDir` only when records
+ * may be discarded by the operating system. The logger owns files inside this
+ * directory and may delete old segment files to enforce [maxArchivedSegments].
  * @property defaultProviderId Opaque delivery cursor id used by the default
  * drain path. Native does not know what backend or consumer this id represents.
  * It only stores a cursor for this provider so consumers can keep separate

@@ -7,17 +7,37 @@ It is not a Logcat reader. It is not a crash reporter. It is not an
 observability SDK. It is not tied to Sentry, Datadog, Firebase, Hilt,
 WorkManager, or any backend.
 
+AndroidOutBox protects the application first. Records are best-effort and may
+be discarded under memory pressure, disk limits, retention limits, storage
+cleanup, corruption, or other runtime constraints.
+
 ## Core Responsibility
 
 - accept structured or text records from app code
 - store records in a bounded native/file-first outbox
 - expose batches for the app to drain
 - commit progress only after app ACK
-- preserve pending records across process restart
+- attempt to preserve recent pending records across ordinary process restart
 - enforce queue and disk limits
 - report pressure and drop stats
 
 The app decides where, when, and how to sink the data.
+
+## Delivery Model
+
+AndroidOutBox is a bounded, best-effort local outbox designed to protect the
+application first.
+
+Records may be dropped under memory pressure, disk limits, retention limits,
+storage cleanup, corruption, or other runtime constraints. Writes must never
+block or destabilize the application.
+
+Reading a batch does not remove it. A provider cursor advances only after ACK,
+allowing failed deliveries to be retried while the records are still retained.
+
+ACK-based delivery does not guarantee that records are stored indefinitely.
+Retention remains bounded, and old unacknowledged records may be discarded to
+protect application resources.
 
 ## Distribution Model
 
@@ -63,7 +83,9 @@ val outbox = AndroidOutboxFactory.create()
 
 outbox.start(
     OutboxConfig(
-        spoolDirectoryPath = context.cacheDir.resolve("android-outbox").absolutePath,
+        spoolDirectoryPath = context.noBackupFilesDir
+            .resolve("android-outbox")
+            .absolutePath,
     ),
 )
 
@@ -86,6 +108,10 @@ if (batch != null) {
     outbox.ack(ackToken = batch.ackToken)
 }
 ```
+
+Use `noBackupFilesDir` or `filesDir` when pending records should survive normal
+cache cleanup. Use `cacheDir` only when records may be discarded by the
+operating system.
 
 ## Design Principles
 
