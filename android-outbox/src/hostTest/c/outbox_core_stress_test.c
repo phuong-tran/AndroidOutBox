@@ -1,4 +1,4 @@
-#include "observability_logger_core.h"
+#include "outbox_core.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -30,11 +30,11 @@ typedef struct stress_worker_t {
   uint32_t worker_id;
   uint32_t record_count;
   uint64_t queue_full_retry_count;
-  observability_logger_status_t failed_status;
+  outbox_status_t failed_status;
 } stress_worker_t;
 
 typedef struct stress_result_t {
-  observability_logger_stats_t stats;
+  outbox_stats_t stats;
   uint64_t queue_full_retries;
   uint64_t elapsed_ns;
   uint32_t sampled_records;
@@ -73,13 +73,13 @@ static int remove_tree(const char* path) {
 }
 
 static int setup_context(stress_context_t* context) {
-  snprintf(context->spool_dir, sizeof(context->spool_dir), "/tmp/obs_logger_stress_XXXXXX");
+  snprintf(context->spool_dir, sizeof(context->spool_dir), "/tmp/outbox_stress_XXXXXX");
   return mkdtemp(context->spool_dir) != NULL ? 1 : 0;
 }
 
 static void teardown_context(stress_context_t* context) {
-  observability_logger_close_pipes();
-  observability_logger_stop();
+  outbox_close_pipes();
+  outbox_stop();
   remove_tree(context->spool_dir);
 }
 
@@ -111,7 +111,7 @@ static void* stress_worker_main(void* opaque) {
 
   for (index = 0u; index < worker->record_count; ++index) {
     char payload[192] = {};
-    observability_logger_status_t status;
+    outbox_status_t status;
     snprintf(payload,
              sizeof(payload),
              "worker=%u record=%u source=native_stress kind=mpsc payload=abcdefghijklmnopqrstuvwxyz",
@@ -121,14 +121,14 @@ static void* stress_worker_main(void* opaque) {
      * failure. Queue-full retries are reported so we can see producer speed
      * versus the single native file writer. */
     do {
-      status = observability_logger_log(4, "stress.mpsc", payload);
-      if (status == OBSERVABILITY_LOGGER_STATUS_QUEUE_FULL) {
+      status = outbox_log(4, "stress.mpsc", payload);
+      if (status == OUTBOX_STATUS_QUEUE_FULL) {
         worker->queue_full_retry_count += 1u;
         sched_yield();
       }
-    } while (status == OBSERVABILITY_LOGGER_STATUS_QUEUE_FULL);
+    } while (status == OUTBOX_STATUS_QUEUE_FULL);
 
-    if (status != OBSERVABILITY_LOGGER_STATUS_OK) {
+    if (status != OUTBOX_STATUS_OK) {
       worker->failed_status = status;
       return NULL;
     }
@@ -143,53 +143,53 @@ static void* stress_worker_main(void* opaque) {
  * cursors without making the stress output noisy.
  */
 static int read_and_ack_single_consumer_sample(stress_result_t* result) {
-  observability_logger_record_batch_t batch = {};
-  if (observability_logger_read_next_batch(STRESS_PRIMARY_PROVIDER_ID,
+  outbox_record_batch_t batch = {};
+  if (outbox_read_next_batch(STRESS_PRIMARY_PROVIDER_ID,
                                            STRESS_SAMPLE_BATCH_RECORDS,
                                            STRESS_SAMPLE_BATCH_BYTES,
-                                           &batch) != OBSERVABILITY_LOGGER_STATUS_OK) {
+                                           &batch) != OUTBOX_STATUS_OK) {
     return 0;
   }
   if (batch.record_count == 0u ||
-      observability_logger_ack(STRESS_PRIMARY_PROVIDER_ID, batch.ack_token) !=
-          OBSERVABILITY_LOGGER_STATUS_OK) {
-    observability_logger_free_record_batch(&batch);
+      outbox_ack(STRESS_PRIMARY_PROVIDER_ID, batch.ack_token) !=
+          OUTBOX_STATUS_OK) {
+    outbox_free_record_batch(&batch);
     return 0;
   }
   result->sampled_records = batch.record_count;
   result->acked_batches = 1u;
-  observability_logger_free_record_batch(&batch);
+  outbox_free_record_batch(&batch);
   return 1;
 }
 
 static int read_and_ack_multi_consumer_sample(stress_result_t* result) {
-  observability_logger_record_batch_t primary_batch = {};
-  observability_logger_record_batch_t secondary_batch = {};
+  outbox_record_batch_t primary_batch = {};
+  outbox_record_batch_t secondary_batch = {};
   char* first_primary_record = NULL;
   int success = 0;
 
-  if (observability_logger_read_next_batch(STRESS_PRIMARY_PROVIDER_ID,
+  if (outbox_read_next_batch(STRESS_PRIMARY_PROVIDER_ID,
                                            STRESS_SAMPLE_BATCH_RECORDS,
                                            STRESS_SAMPLE_BATCH_BYTES,
-                                           &primary_batch) != OBSERVABILITY_LOGGER_STATUS_OK ||
+                                           &primary_batch) != OUTBOX_STATUS_OK ||
       primary_batch.record_count == 0u) {
     goto cleanup;
   }
   first_primary_record = strdup(primary_batch.records[0]);
   if (first_primary_record == NULL ||
-      observability_logger_ack(STRESS_PRIMARY_PROVIDER_ID, primary_batch.ack_token) !=
-          OBSERVABILITY_LOGGER_STATUS_OK) {
+      outbox_ack(STRESS_PRIMARY_PROVIDER_ID, primary_batch.ack_token) !=
+          OUTBOX_STATUS_OK) {
     goto cleanup;
   }
 
-  if (observability_logger_read_next_batch(STRESS_SECONDARY_PROVIDER_ID,
+  if (outbox_read_next_batch(STRESS_SECONDARY_PROVIDER_ID,
                                            STRESS_SAMPLE_BATCH_RECORDS,
                                            STRESS_SAMPLE_BATCH_BYTES,
-                                           &secondary_batch) != OBSERVABILITY_LOGGER_STATUS_OK ||
+                                           &secondary_batch) != OUTBOX_STATUS_OK ||
       secondary_batch.record_count != primary_batch.record_count ||
       strcmp(secondary_batch.records[0], first_primary_record) != 0 ||
-      observability_logger_ack(STRESS_SECONDARY_PROVIDER_ID, secondary_batch.ack_token) !=
-          OBSERVABILITY_LOGGER_STATUS_OK) {
+      outbox_ack(STRESS_SECONDARY_PROVIDER_ID, secondary_batch.ack_token) !=
+          OUTBOX_STATUS_OK) {
     goto cleanup;
   }
 
@@ -199,8 +199,8 @@ static int read_and_ack_multi_consumer_sample(stress_result_t* result) {
 
 cleanup:
   free(first_primary_record);
-  observability_logger_free_record_batch(&primary_batch);
-  observability_logger_free_record_batch(&secondary_batch);
+  outbox_free_record_batch(&primary_batch);
+  outbox_free_record_batch(&secondary_batch);
   return success;
 }
 
@@ -280,7 +280,7 @@ static int run_stress_scenario(int multi_consumer,
                                uint32_t max_record_bytes,
                                stress_result_t* output_result) {
   stress_context_t context = {};
-  observability_logger_config_t config = {};
+  outbox_config_t config = {};
   stress_result_t result = {};
   pthread_t* threads = NULL;
   stress_worker_t* workers = NULL;
@@ -301,7 +301,7 @@ static int run_stress_scenario(int multi_consumer,
   config.max_record_bytes = max_record_bytes;
   config.max_segment_size_bytes = STRESS_SEGMENT_BYTES;
   config.max_archived_segments = 128u;
-  if (observability_logger_start(&config) != OBSERVABILITY_LOGGER_STATUS_OK) {
+  if (outbox_start(&config) != OUTBOX_STATUS_OK) {
     goto cleanup;
   }
 
@@ -320,11 +320,11 @@ static int run_stress_scenario(int multi_consumer,
     result.queue_full_retries += workers[index].queue_full_retry_count;
   }
 
-  if (observability_logger_flush() != OBSERVABILITY_LOGGER_STATUS_OK) {
+  if (outbox_flush() != OUTBOX_STATUS_OK) {
     goto cleanup;
   }
   result.elapsed_ns = monotonic_ns() - started_ns;
-  observability_logger_get_stats(&result.stats);
+  outbox_get_stats(&result.stats);
 
   if (result.stats.accepted_count != total_records ||
       result.stats.written_count != total_records ||

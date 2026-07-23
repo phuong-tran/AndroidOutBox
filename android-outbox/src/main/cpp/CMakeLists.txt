@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.22.1)
 project("android_outbox")
 
 add_library(android_outbox SHARED
-        observability_logger_control.c
-        observability_logger_core.c
-        observability_logger_frame.c
-        observability_logger_queue.c
-        observability_logger_spool.c
-        observability_logger_writer.c
-        observability_logger_jni.cpp)
+        outbox_control.c
+        outbox_core.c
+        outbox_frame.c
+        outbox_queue.c
+        outbox_spool.c
+        outbox_writer.c
+        outbox_jni.cpp)
 
 target_compile_options(android_outbox PRIVATE
         -fPIC

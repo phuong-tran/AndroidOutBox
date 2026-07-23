@@ -1,4 +1,4 @@
-#include "observability_logger_core.h"
+#include "outbox_core.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -19,7 +19,7 @@
   } while (0)
 
 #define ASSERT_STATUS_OK(expression) \
-  ASSERT_TRUE((expression) == OBSERVABILITY_LOGGER_STATUS_OK)
+  ASSERT_TRUE((expression) == OUTBOX_STATUS_OK)
 
 #define TEST_CONTROL_HEADER_BYTES 24u
 #define TEST_CONTROL_MAGIC 0x5A4F4253u
@@ -102,18 +102,18 @@ static int remove_tree(const char* path) {
 }
 
 static int setup_context(test_context_t* context) {
-  snprintf(context->spool_dir, sizeof(context->spool_dir), "/tmp/obs_logger_test_XXXXXX");
+  snprintf(context->spool_dir, sizeof(context->spool_dir), "/tmp/outbox_test_XXXXXX");
   return mkdtemp(context->spool_dir) != NULL ? 1 : 0;
 }
 
 static void teardown_context(test_context_t* context) {
-  observability_logger_close_pipes();
-  observability_logger_stop();
+  outbox_close_pipes();
+  outbox_stop();
   remove_tree(context->spool_dir);
 }
 
-static observability_logger_config_t config_for(const test_context_t* context) {
-  observability_logger_config_t config = {};
+static outbox_config_t config_for(const test_context_t* context) {
+  outbox_config_t config = {};
   config.spool_directory_path = context->spool_dir;
   config.default_provider_id = TEST_PROVIDER_ID;
   config.queue_capacity = 8u;
@@ -147,14 +147,14 @@ static int count_segment_files(const char* directory, uint32_t* out_count) {
 }
 
 static int start_logger(test_context_t* context) {
-  observability_logger_config_t config = config_for(context);
-  return observability_logger_start(&config) == OBSERVABILITY_LOGGER_STATUS_OK;
+  outbox_config_t config = config_for(context);
+  return outbox_start(&config) == OUTBOX_STATUS_OK;
 }
 
 static int log_and_flush(const char* category, const char* payload) {
-  return observability_logger_log(4, category, payload) ==
-             OBSERVABILITY_LOGGER_STATUS_OK &&
-         observability_logger_flush() == OBSERVABILITY_LOGGER_STATUS_OK;
+  return outbox_log(4, category, payload) ==
+             OUTBOX_STATUS_OK &&
+         outbox_flush() == OUTBOX_STATUS_OK;
 }
 
 static void* concurrent_log_worker_main(void* opaque) {
@@ -162,19 +162,19 @@ static void* concurrent_log_worker_main(void* opaque) {
   uint32_t index = 0u;
   for (index = 0u; index < worker->record_count; ++index) {
     char payload[96] = {};
-    observability_logger_status_t status;
+    outbox_status_t status;
     snprintf(payload,
              sizeof(payload),
              "worker=%u record=%u",
              worker->worker_id,
              index);
     do {
-      status = observability_logger_log(4, "network.concurrent", payload);
-      if (status == OBSERVABILITY_LOGGER_STATUS_QUEUE_FULL) {
+      status = outbox_log(4, "network.concurrent", payload);
+      if (status == OUTBOX_STATUS_QUEUE_FULL) {
         usleep(1000u);
       }
-    } while (status == OBSERVABILITY_LOGGER_STATUS_QUEUE_FULL);
-    if (status != OBSERVABILITY_LOGGER_STATUS_OK) {
+    } while (status == OUTBOX_STATUS_QUEUE_FULL);
+    if (status != OUTBOX_STATUS_OK) {
       worker->failed = 1;
       return NULL;
     }
@@ -184,7 +184,7 @@ static void* concurrent_log_worker_main(void* opaque) {
 
 static void* concurrent_stop_worker_main(void* opaque) {
   concurrent_stop_worker_t* worker = (concurrent_stop_worker_t*)opaque;
-  observability_logger_stop();
+  outbox_stop();
   if (worker == NULL) {
     return NULL;
   }
@@ -465,7 +465,7 @@ static int assert_ok_response(int fd, uint64_t sequence, uint32_t command) {
   if (!read_control_response(fd, &response) ||
       response.sequence != sequence ||
       response.command != command ||
-      response.status != OBSERVABILITY_LOGGER_STATUS_OK) {
+      response.status != OUTBOX_STATUS_OK) {
     free_control_response(&response);
     return 0;
   }
@@ -473,7 +473,7 @@ static int assert_ok_response(int fd, uint64_t sequence, uint32_t command) {
   return 1;
 }
 
-static int close_pipes_with_command(observability_logger_pipes_t* pipes,
+static int close_pipes_with_command(outbox_pipes_t* pipes,
                                     uint64_t sequence) {
   if (pipes == NULL) {
     return 0;
@@ -607,52 +607,52 @@ static int contains_event(const uint32_t* events, size_t count, uint32_t event) 
 
 static int test_unacked_batch_survives_restart(void) {
   test_context_t context = {};
-  observability_logger_record_batch_t batch = {};
+  outbox_record_batch_t batch = {};
   char* first_ack = NULL;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "first") != NULL);
   first_ack = strdup(batch.ack_token);
   ASSERT_TRUE(first_ack != NULL);
-  observability_logger_free_record_batch(&batch);
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, first_ack));
+  outbox_free_record_batch(&batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, first_ack));
   free(first_ack);
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "second") != NULL);
-  observability_logger_free_record_batch(&batch);
+  outbox_free_record_batch(&batch);
 
-  observability_logger_stop();
+  outbox_stop();
   ASSERT_TRUE(start_logger(&context));
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "second") != NULL);
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, batch.ack_token));
-  observability_logger_free_record_batch(&batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  outbox_free_record_batch(&batch);
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 0u);
-  observability_logger_free_record_batch(&batch);
+  outbox_free_record_batch(&batch);
   teardown_context(&context);
   return 0;
 }
 
 static int test_open_pipes_reports_existing_backlog(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
+  outbox_pipes_t pipes = {};
   uint32_t events[4] = {};
   size_t event_count = 0u;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "backlog"));
 
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 4u, &event_count));
   ASSERT_TRUE(contains_event(events, event_count, TEST_DOORBELL_HANDSHAKE));
   ASSERT_TRUE(contains_event(events, event_count, TEST_DOORBELL_DATA_AVAILABLE));
@@ -663,21 +663,21 @@ static int test_open_pipes_reports_existing_backlog(void) {
 
 static int test_ack_reports_remaining_backlog(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
-  observability_logger_record_batch_t batch = {};
+  outbox_pipes_t pipes = {};
+  outbox_record_batch_t batch = {};
   uint32_t events[8] = {};
   size_t event_count = 0u;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, batch.ack_token));
-  observability_logger_free_record_batch(&batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  outbox_free_record_batch(&batch);
 
   event_count = 0u;
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
@@ -689,30 +689,30 @@ static int test_ack_reports_remaining_backlog(void) {
 
 static int test_provider_cursors_are_independent(void) {
   test_context_t context = {};
-  observability_logger_record_batch_t primary_batch = {};
-  observability_logger_record_batch_t secondary_batch = {};
+  outbox_record_batch_t primary_batch = {};
+  outbox_record_batch_t secondary_batch = {};
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(primary_batch.records[0], "first") != NULL);
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
-  observability_logger_free_record_batch(&primary_batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
+  outbox_free_record_batch(&primary_batch);
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch("secondary", 2u, 4096u, &secondary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch("secondary", 2u, 4096u, &secondary_batch));
   ASSERT_TRUE(secondary_batch.record_count == 2u);
   ASSERT_TRUE(strstr(secondary_batch.records[0], "first") != NULL);
   ASSERT_TRUE(strstr(secondary_batch.records[1], "second") != NULL);
-  ASSERT_STATUS_OK(observability_logger_ack("secondary", secondary_batch.ack_token));
-  observability_logger_free_record_batch(&secondary_batch);
+  ASSERT_STATUS_OK(outbox_ack("secondary", secondary_batch.ack_token));
+  outbox_free_record_batch(&secondary_batch);
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(primary_batch.records[0], "second") != NULL);
-  observability_logger_free_record_batch(&primary_batch);
+  outbox_free_record_batch(&primary_batch);
 
   teardown_context(&context);
   return 0;
@@ -720,37 +720,37 @@ static int test_provider_cursors_are_independent(void) {
 
 static int test_ack_requires_existing_provider_cursor(void) {
   test_context_t context = {};
-  observability_logger_record_batch_t primary_batch = {};
-  observability_logger_record_batch_t secondary_batch = {};
+  outbox_record_batch_t primary_batch = {};
+  outbox_record_batch_t secondary_batch = {};
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID,
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID,
                                                         1u,
                                                         4096u,
                                                         &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
-  ASSERT_TRUE(observability_logger_ack("secondary", primary_batch.ack_token) ==
-              OBSERVABILITY_LOGGER_STATUS_INVALID_ARGUMENT);
+  ASSERT_TRUE(outbox_ack("secondary", primary_batch.ack_token) ==
+              OUTBOX_STATUS_INVALID_ARGUMENT);
 
   /* A provider cursor is created by readBatch, not by ack. A new provider still
    * starts from the first durable line because the rejected ACK did not move it. */
-  ASSERT_STATUS_OK(observability_logger_read_next_batch("secondary", 1u, 4096u, &secondary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch("secondary", 1u, 4096u, &secondary_batch));
   ASSERT_TRUE(secondary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(secondary_batch.records[0], "first") != NULL);
 
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
-  ASSERT_STATUS_OK(observability_logger_ack("secondary", secondary_batch.ack_token));
-  observability_logger_free_record_batch(&primary_batch);
-  observability_logger_free_record_batch(&secondary_batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack("secondary", secondary_batch.ack_token));
+  outbox_free_record_batch(&primary_batch);
+  outbox_free_record_batch(&secondary_batch);
   teardown_context(&context);
   return 0;
 }
 
 static int test_data_available_doorbell_is_coalesced_until_batch_read(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
+  outbox_pipes_t pipes = {};
   char ack_token[64] = {};
   char first_record[512] = {};
   uint32_t status = 0u;
@@ -759,7 +759,7 @@ static int test_data_available_doorbell_is_coalesced_until_batch_read(void) {
   size_t event_count = 0u;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
   ASSERT_TRUE(contains_event(events, event_count, TEST_DOORBELL_HANDSHAKE));
 
@@ -782,7 +782,7 @@ static int test_data_available_doorbell_is_coalesced_until_batch_read(void) {
                                          &record_count,
                                          first_record,
                                          sizeof(first_record)));
-  ASSERT_TRUE(status == OBSERVABILITY_LOGGER_STATUS_OK);
+  ASSERT_TRUE(status == OUTBOX_STATUS_OK);
   ASSERT_TRUE(record_count == 1u);
   ASSERT_TRUE(strstr(first_record, "first") != NULL);
 
@@ -803,15 +803,15 @@ static int test_data_available_doorbell_is_coalesced_until_batch_read(void) {
 
 static int test_control_pipe_accepts_log_command_frame(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
-  observability_logger_record_batch_t batch = {};
+  outbox_pipes_t pipes = {};
+  outbox_record_batch_t batch = {};
   uint32_t events[8] = {};
   size_t event_count = 0u;
   const uint64_t sequence = 21u;
   const uint64_t flush_sequence = 22u;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
 
   ASSERT_TRUE(write_log_command(pipes.command_write_fd,
@@ -825,10 +825,10 @@ static int test_control_pipe_accepts_log_command_frame(void) {
   ASSERT_TRUE(assert_ok_response(pipes.record_read_fd,
                                  flush_sequence,
                                  TEST_CONTROL_COMMAND_FLUSH));
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "pipe-frame-log") != NULL);
-  observability_logger_free_record_batch(&batch);
+  outbox_free_record_batch(&batch);
 
   ASSERT_TRUE(close_pipes_with_command(&pipes, 23u));
   teardown_context(&context);
@@ -837,7 +837,7 @@ static int test_control_pipe_accepts_log_command_frame(void) {
 
 static int test_control_pipe_reads_and_acks_batch_frames(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
+  outbox_pipes_t pipes = {};
   char ack_token[64] = {};
   char first_record[512] = {};
   uint32_t status = 0u;
@@ -850,7 +850,7 @@ static int test_control_pipe_reads_and_acks_batch_frames(void) {
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
 
   ASSERT_TRUE(write_read_batch_command(pipes.command_write_fd, read_sequence, 1u, 4096u));
@@ -863,7 +863,7 @@ static int test_control_pipe_reads_and_acks_batch_frames(void) {
                                          &record_count,
                                          first_record,
                                          sizeof(first_record)));
-  ASSERT_TRUE(status == OBSERVABILITY_LOGGER_STATUS_OK);
+  ASSERT_TRUE(status == OUTBOX_STATUS_OK);
   ASSERT_TRUE(record_count == 1u);
   ASSERT_TRUE(strstr(first_record, "first") != NULL);
 
@@ -883,7 +883,7 @@ static int test_control_pipe_reads_and_acks_batch_frames(void) {
 
 static int test_control_pipe_returns_stats_response(void) {
   test_context_t context = {};
-  observability_logger_pipes_t pipes = {};
+  outbox_pipes_t pipes = {};
   test_control_response_t response = {};
   uint32_t events[8] = {};
   size_t event_count = 0u;
@@ -891,7 +891,7 @@ static int test_control_pipe_returns_stats_response(void) {
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "stats-record"));
-  ASSERT_STATUS_OK(observability_logger_open_pipes(&pipes));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
 
   ASSERT_TRUE(write_simple_command(pipes.command_write_fd,
@@ -900,7 +900,7 @@ static int test_control_pipe_returns_stats_response(void) {
   ASSERT_TRUE(read_control_response(pipes.record_read_fd, &response));
   ASSERT_TRUE(response.sequence == stats_sequence);
   ASSERT_TRUE(response.command == TEST_CONTROL_COMMAND_GET_STATS);
-  ASSERT_TRUE(response.status == OBSERVABILITY_LOGGER_STATUS_OK);
+  ASSERT_TRUE(response.status == OUTBOX_STATUS_OK);
   ASSERT_TRUE(response.body_length == TEST_STATS_BODY_BYTES);
   ASSERT_TRUE(read_u64_le(response.body) == 1u);
   ASSERT_TRUE(read_u64_le(response.body + 40u) >= 1u);
@@ -918,9 +918,9 @@ static int test_segment_retention_prunes_unacked_backlog(void) {
     MAX_SEGMENT_COUNT = MAX_ARCHIVED_SEGMENTS + 1,
   };
   test_context_t context = {};
-  observability_logger_config_t config = {};
-  observability_logger_record_batch_t batch = {};
-  observability_logger_stats_t stats = {};
+  outbox_config_t config = {};
+  outbox_record_batch_t batch = {};
+  outbox_stats_t stats = {};
   uint32_t index = 0u;
   uint32_t segment_count = 0u;
   ASSERT_TRUE(setup_context(&context));
@@ -928,7 +928,7 @@ static int test_segment_retention_prunes_unacked_backlog(void) {
   config = config_for(&context);
   config.max_segment_size_bytes = 512u;
   config.max_archived_segments = MAX_ARCHIVED_SEGMENTS;
-  ASSERT_STATUS_OK(observability_logger_start(&config));
+  ASSERT_STATUS_OK(outbox_start(&config));
 
   for (index = 0u; index < RECORD_COUNT; ++index) {
     char payload[256] = {};
@@ -937,18 +937,18 @@ static int test_segment_retention_prunes_unacked_backlog(void) {
              "retention record=%u padding=abcdefghijklmnopqrstuvwxyz0123456789"
              "abcdefghijklmnopqrstuvwxyz0123456789",
              index);
-    ASSERT_STATUS_OK(observability_logger_log(4, "retention.cap", payload));
-    ASSERT_STATUS_OK(observability_logger_flush());
+    ASSERT_STATUS_OK(outbox_log(4, "retention.cap", payload));
+    ASSERT_STATUS_OK(outbox_flush());
   }
 
-  observability_logger_get_stats(&stats);
+  outbox_get_stats(&stats);
   ASSERT_TRUE(stats.roll_count > MAX_SEGMENT_COUNT);
   ASSERT_TRUE(count_segment_files(context.spool_dir, &segment_count));
   ASSERT_TRUE(segment_count <= MAX_SEGMENT_COUNT);
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(TEST_PROVIDER_ID, 8u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 8u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count > 0u);
-  observability_logger_free_record_batch(&batch);
+  outbox_free_record_batch(&batch);
 
   teardown_context(&context);
   return 0;
@@ -960,16 +960,16 @@ static int test_concurrent_producers_flush_all_records(void) {
     RECORDS_PER_WORKER = 64,
   };
   test_context_t context = {};
-  observability_logger_config_t config = {};
+  outbox_config_t config = {};
   pthread_t threads[WORKER_COUNT] = {};
   concurrent_log_worker_t workers[WORKER_COUNT] = {};
-  observability_logger_stats_t stats = {};
+  outbox_stats_t stats = {};
   uint32_t index = 0u;
   ASSERT_TRUE(setup_context(&context));
 
   config = config_for(&context);
   config.queue_capacity = 16u;
-  ASSERT_STATUS_OK(observability_logger_start(&config));
+  ASSERT_STATUS_OK(outbox_start(&config));
 
   for (index = 0u; index < WORKER_COUNT; ++index) {
     workers[index].worker_id = index;
@@ -984,8 +984,8 @@ static int test_concurrent_producers_flush_all_records(void) {
     ASSERT_TRUE(workers[index].failed == 0);
   }
 
-  ASSERT_STATUS_OK(observability_logger_flush());
-  observability_logger_get_stats(&stats);
+  ASSERT_STATUS_OK(outbox_flush());
+  outbox_get_stats(&stats);
   ASSERT_TRUE(stats.accepted_count == (uint64_t)WORKER_COUNT * RECORDS_PER_WORKER);
   ASSERT_TRUE(stats.written_count == (uint64_t)WORKER_COUNT * RECORDS_PER_WORKER);
   ASSERT_TRUE(stats.queue_depth == 0u);
@@ -999,8 +999,8 @@ static int test_large_payload_round_trips_through_spool(void) {
     PAYLOAD_BYTES = 1024u * 1024u,
   };
   test_context_t context = {};
-  observability_logger_config_t config = {};
-  observability_logger_record_batch_t batch = {};
+  outbox_config_t config = {};
+  outbox_record_batch_t batch = {};
   char* payload = NULL;
   uint32_t index = 0u;
   ASSERT_TRUE(setup_context(&context));
@@ -1015,11 +1015,11 @@ static int test_large_payload_round_trips_through_spool(void) {
   config.queue_capacity = 2u;
   config.max_record_bytes = PAYLOAD_BYTES + 1u;
   config.max_segment_size_bytes = (uint64_t)PAYLOAD_BYTES * 2u;
-  ASSERT_STATUS_OK(observability_logger_start(&config));
-  ASSERT_STATUS_OK(observability_logger_log(4, "network.large_payload", payload));
-  ASSERT_STATUS_OK(observability_logger_flush());
+  ASSERT_STATUS_OK(outbox_start(&config));
+  ASSERT_STATUS_OK(outbox_log(4, "network.large_payload", payload));
+  ASSERT_STATUS_OK(outbox_flush());
 
-  ASSERT_STATUS_OK(observability_logger_read_next_batch(
+  ASSERT_STATUS_OK(outbox_read_next_batch(
       TEST_PROVIDER_ID,
       1u,
       PAYLOAD_BYTES + 2048u,
@@ -1027,8 +1027,8 @@ static int test_large_payload_round_trips_through_spool(void) {
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "network.large_payload") != NULL);
   ASSERT_TRUE(strlen(batch.records[0]) > PAYLOAD_BYTES);
-  ASSERT_STATUS_OK(observability_logger_ack(TEST_PROVIDER_ID, batch.ack_token));
-  observability_logger_free_record_batch(&batch);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  outbox_free_record_batch(&batch);
   free(payload);
   teardown_context(&context);
   return 0;
@@ -1041,7 +1041,7 @@ static int test_concurrent_stop_is_idempotent(void) {
   test_context_t context = {};
   pthread_t threads[STOP_WORKER_COUNT] = {};
   concurrent_stop_worker_t workers[STOP_WORKER_COUNT] = {};
-  observability_logger_stats_t stats = {};
+  outbox_stats_t stats = {};
   uint32_t index = 0u;
 
   ASSERT_TRUE(setup_context(&context));
@@ -1060,7 +1060,7 @@ static int test_concurrent_stop_is_idempotent(void) {
     ASSERT_TRUE(workers[index].failed == 0);
   }
 
-  observability_logger_get_stats(&stats);
+  outbox_get_stats(&stats);
   ASSERT_TRUE(stats.started == 0u);
   teardown_context(&context);
   return 0;

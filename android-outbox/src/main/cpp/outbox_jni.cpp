@@ -1,4 +1,4 @@
-#include "observability_logger_core.h"
+#include "outbox_core.h"
 
 #include <jni.h>
 #include <unistd.h>
@@ -12,10 +12,10 @@ constexpr jint kPipeCount = 3;
 extern "C" JNIEXPORT jintArray JNICALL
 Java_io_github_phuongtran_androidoutbox_NativeAndroidOutbox_nativeOpenPipes(JNIEnv* env,
                                                                                    jobject) {
-  observability_logger_pipes_t pipes = {};
+  outbox_pipes_t pipes = {};
   jint values[kPipeCount] = {};
-  if (observability_logger_open_pipes(&pipes) !=
-      OBSERVABILITY_LOGGER_STATUS_OK) {
+  if (outbox_open_pipes(&pipes) !=
+      OUTBOX_STATUS_OK) {
     return nullptr;
   }
   values[0] = pipes.command_write_fd;
@@ -27,7 +27,7 @@ Java_io_github_phuongtran_androidoutbox_NativeAndroidOutbox_nativeOpenPipes(JNIE
     close(pipes.command_write_fd);
     close(pipes.doorbell_read_fd);
     close(pipes.record_read_fd);
-    observability_logger_close_pipes();
+    outbox_close_pipes();
     return nullptr;
   }
   env->SetIntArrayRegion(result, 0, kPipeCount, values);
@@ -35,7 +35,7 @@ Java_io_github_phuongtran_androidoutbox_NativeAndroidOutbox_nativeOpenPipes(JNIE
     close(pipes.command_write_fd);
     close(pipes.doorbell_read_fd);
     close(pipes.record_read_fd);
-    observability_logger_close_pipes();
+    outbox_close_pipes();
     return nullptr;
   }
   return result;

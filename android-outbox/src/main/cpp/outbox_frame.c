@@ -1,4 +1,4 @@
-#include "observability_logger_frame.h"
+#include "outbox_frame.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -9,42 +9,42 @@
 #include <string.h>
 #include <unistd.h>
 
-uint32_t observability_logger_read_u32_le(const uint8_t* data) {
+uint32_t outbox_read_u32_le(const uint8_t* data) {
   return (uint32_t)data[0] | ((uint32_t)data[1] << 8u) | ((uint32_t)data[2] << 16u) |
          ((uint32_t)data[3] << 24u);
 }
 
-uint32_t observability_logger_read_u32_be(const uint8_t* data) {
+uint32_t outbox_read_u32_be(const uint8_t* data) {
   return ((uint32_t)data[0] << 24u) | ((uint32_t)data[1] << 16u) |
          ((uint32_t)data[2] << 8u) | (uint32_t)data[3];
 }
 
-uint64_t observability_logger_read_u64_le(const uint8_t* data) {
-  return (uint64_t)observability_logger_read_u32_le(data) |
-         ((uint64_t)observability_logger_read_u32_le(data + 4u) << 32u);
+uint64_t outbox_read_u64_le(const uint8_t* data) {
+  return (uint64_t)outbox_read_u32_le(data) |
+         ((uint64_t)outbox_read_u32_le(data + 4u) << 32u);
 }
 
-void observability_logger_write_u32_le(uint32_t value, uint8_t* data) {
+void outbox_write_u32_le(uint32_t value, uint8_t* data) {
   data[0] = (uint8_t)(value & 0xffu);
   data[1] = (uint8_t)((value >> 8u) & 0xffu);
   data[2] = (uint8_t)((value >> 16u) & 0xffu);
   data[3] = (uint8_t)((value >> 24u) & 0xffu);
 }
 
-void observability_logger_write_u64_le(uint64_t value, uint8_t* data) {
-  observability_logger_write_u32_le((uint32_t)(value & 0xffffffffu), data);
-  observability_logger_write_u32_le((uint32_t)((value >> 32u) & 0xffffffffu),
+void outbox_write_u64_le(uint64_t value, uint8_t* data) {
+  outbox_write_u32_le((uint32_t)(value & 0xffffffffu), data);
+  outbox_write_u32_le((uint32_t)((value >> 32u) & 0xffffffffu),
                                     data + 4u);
 }
 
-void observability_logger_write_u32_be(uint32_t value, uint8_t* data) {
+void outbox_write_u32_be(uint32_t value, uint8_t* data) {
   data[0] = (uint8_t)((value >> 24u) & 0xffu);
   data[1] = (uint8_t)((value >> 16u) & 0xffu);
   data[2] = (uint8_t)((value >> 8u) & 0xffu);
   data[3] = (uint8_t)(value & 0xffu);
 }
 
-int observability_logger_set_fd_cloexec(int fd) {
+int outbox_set_fd_cloexec(int fd) {
   int flags = fcntl(fd, F_GETFD, 0);
   if (flags < 0) {
     return 0;
@@ -52,7 +52,7 @@ int observability_logger_set_fd_cloexec(int fd) {
   return fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0 ? 1 : 0;
 }
 
-int observability_logger_set_fd_nonblocking(int fd) {
+int outbox_set_fd_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0) {
     return 0;
@@ -60,7 +60,7 @@ int observability_logger_set_fd_nonblocking(int fd) {
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 ? 1 : 0;
 }
 
-int observability_logger_write_all_bytes(int fd, const void* data, size_t length) {
+int outbox_write_all_bytes(int fd, const void* data, size_t length) {
   size_t total_written = 0u;
   const uint8_t* bytes = (const uint8_t*)data;
   while (total_written < length) {
@@ -126,7 +126,7 @@ static ssize_t write_no_sigpipe_once(int fd, const void* data, size_t length) {
 #endif
 }
 
-int observability_logger_write_pipe_all_bytes(int fd, const void* data, size_t length) {
+int outbox_write_pipe_all_bytes(int fd, const void* data, size_t length) {
   size_t total_written = 0u;
   const uint8_t* bytes = (const uint8_t*)data;
   while (total_written < length) {
@@ -145,7 +145,7 @@ int observability_logger_write_pipe_all_bytes(int fd, const void* data, size_t l
   return 1;
 }
 
-observability_logger_frame_read_status_t observability_logger_wait_readable_fd(
+outbox_frame_read_status_t outbox_wait_readable_fd(
     int fd,
     int timeout_ms) {
   struct pollfd poll_fd = {};
@@ -158,22 +158,22 @@ observability_logger_frame_read_status_t observability_logger_wait_readable_fd(
   } while (rc < 0 && errno == EINTR);
 
   if (rc == 0) {
-    return OBS_LOGGER_FRAME_READ_WOULD_BLOCK;
+    return OUTBOX_FRAME_READ_WOULD_BLOCK;
   }
   if (rc < 0) {
-    return OBS_LOGGER_FRAME_READ_IO;
+    return OUTBOX_FRAME_READ_IO;
   }
   if ((poll_fd.revents & POLLIN) != 0) {
-    return OBS_LOGGER_FRAME_READ_OK;
+    return OUTBOX_FRAME_READ_OK;
   }
   if ((poll_fd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
-    return OBS_LOGGER_FRAME_READ_CLOSED;
+    return OUTBOX_FRAME_READ_CLOSED;
   }
-  return OBS_LOGGER_FRAME_READ_WOULD_BLOCK;
+  return OUTBOX_FRAME_READ_WOULD_BLOCK;
 }
 
-void observability_logger_frame_reader_init(
-    observability_logger_frame_reader_t* reader,
+void outbox_frame_reader_init(
+    outbox_frame_reader_t* reader,
     int fd,
     uint32_t max_frame_bytes) {
   if (reader == NULL) {
@@ -184,8 +184,8 @@ void observability_logger_frame_reader_init(
   reader->max_frame_bytes = max_frame_bytes;
 }
 
-void observability_logger_frame_reader_reset(
-    observability_logger_frame_reader_t* reader) {
+void outbox_frame_reader_reset(
+    outbox_frame_reader_t* reader) {
   if (reader == NULL) {
     return;
   }
@@ -196,7 +196,7 @@ void observability_logger_frame_reader_reset(
   reader->frame_have = 0u;
 }
 
-static observability_logger_frame_read_status_t read_nonblocking_fd(
+static outbox_frame_read_status_t read_nonblocking_fd(
     int fd,
     uint8_t* data,
     uint32_t length,
@@ -204,75 +204,75 @@ static observability_logger_frame_read_status_t read_nonblocking_fd(
   ssize_t bytes_read = 0;
 
   if (data == NULL || out_bytes_read == NULL || length == 0u) {
-    return OBS_LOGGER_FRAME_READ_IO;
+    return OUTBOX_FRAME_READ_IO;
   }
   *out_bytes_read = 0u;
   bytes_read = read(fd, data, length);
   if (bytes_read > 0) {
     *out_bytes_read = (uint32_t)bytes_read;
-    return OBS_LOGGER_FRAME_READ_OK;
+    return OUTBOX_FRAME_READ_OK;
   }
   if (bytes_read == 0) {
-    return OBS_LOGGER_FRAME_READ_CLOSED;
+    return OUTBOX_FRAME_READ_CLOSED;
   }
   if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-    return OBS_LOGGER_FRAME_READ_WOULD_BLOCK;
+    return OUTBOX_FRAME_READ_WOULD_BLOCK;
   }
-  return OBS_LOGGER_FRAME_READ_IO;
+  return OUTBOX_FRAME_READ_IO;
 }
 
-observability_logger_frame_read_status_t observability_logger_frame_reader_read_try(
-    observability_logger_frame_reader_t* reader,
+outbox_frame_read_status_t outbox_frame_reader_read_try(
+    outbox_frame_reader_t* reader,
     uint8_t** out_frame,
     uint32_t* out_frame_length) {
   if (reader == NULL || out_frame == NULL || out_frame_length == NULL) {
-    return OBS_LOGGER_FRAME_READ_IO;
+    return OUTBOX_FRAME_READ_IO;
   }
   *out_frame = NULL;
   *out_frame_length = 0u;
 
-  while (reader->header_have < OBS_LOGGER_FRAME_HEADER_BYTES) {
+  while (reader->header_have < OUTBOX_FRAME_HEADER_BYTES) {
     uint32_t bytes_read = 0u;
-    observability_logger_frame_read_status_t status =
+    outbox_frame_read_status_t status =
         read_nonblocking_fd(reader->fd,
                             reader->header + reader->header_have,
-                            OBS_LOGGER_FRAME_HEADER_BYTES - reader->header_have,
+                            OUTBOX_FRAME_HEADER_BYTES - reader->header_have,
                             &bytes_read);
-    if (status == OBS_LOGGER_FRAME_READ_WOULD_BLOCK) {
+    if (status == OUTBOX_FRAME_READ_WOULD_BLOCK) {
       return status;
     }
-    if (status != OBS_LOGGER_FRAME_READ_OK) {
-      observability_logger_frame_reader_reset(reader);
+    if (status != OUTBOX_FRAME_READ_OK) {
+      outbox_frame_reader_reset(reader);
       return status;
     }
     reader->header_have += bytes_read;
   }
 
   if (reader->frame == NULL) {
-    reader->frame_length = observability_logger_read_u32_be(reader->header);
+    reader->frame_length = outbox_read_u32_be(reader->header);
     if (reader->frame_length == 0u || reader->frame_length > reader->max_frame_bytes) {
-      observability_logger_frame_reader_reset(reader);
-      return OBS_LOGGER_FRAME_READ_IO;
+      outbox_frame_reader_reset(reader);
+      return OUTBOX_FRAME_READ_IO;
     }
     reader->frame = (uint8_t*)calloc(1u, reader->frame_length);
     if (reader->frame == NULL) {
-      observability_logger_frame_reader_reset(reader);
-      return OBS_LOGGER_FRAME_READ_NOMEM;
+      outbox_frame_reader_reset(reader);
+      return OUTBOX_FRAME_READ_NOMEM;
     }
   }
 
   while (reader->frame_have < reader->frame_length) {
     uint32_t bytes_read = 0u;
-    observability_logger_frame_read_status_t status =
+    outbox_frame_read_status_t status =
         read_nonblocking_fd(reader->fd,
                             reader->frame + reader->frame_have,
                             reader->frame_length - reader->frame_have,
                             &bytes_read);
-    if (status == OBS_LOGGER_FRAME_READ_WOULD_BLOCK) {
+    if (status == OUTBOX_FRAME_READ_WOULD_BLOCK) {
       return status;
     }
-    if (status != OBS_LOGGER_FRAME_READ_OK) {
-      observability_logger_frame_reader_reset(reader);
+    if (status != OUTBOX_FRAME_READ_OK) {
+      outbox_frame_reader_reset(reader);
       return status;
     }
     reader->frame_have += bytes_read;
@@ -284,5 +284,5 @@ observability_logger_frame_read_status_t observability_logger_frame_reader_read_
   reader->header_have = 0u;
   reader->frame_length = 0u;
   reader->frame_have = 0u;
-  return OBS_LOGGER_FRAME_READ_OK;
+  return OUTBOX_FRAME_READ_OK;
 }

@@ -1,22 +1,22 @@
 def hostTestBuildDir = layout.buildDirectory.dir("nativeHostTest")
-def hostTestBinary = hostTestBuildDir.map { it.file("observability_logger_core_test").asFile }
-def hostStressTestBinary = hostTestBuildDir.map { it.file("observability_logger_core_stress_test").asFile }
+def hostTestBinary = hostTestBuildDir.map { it.file("outbox_core_test").asFile }
+def hostStressTestBinary = hostTestBuildDir.map { it.file("outbox_core_stress_test").asFile }
 def isWindowsHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("windows")
 def isMacHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("mac")
 def hostCompiler = providers.environmentVariable("CC").orElse("cc").get()
 def hostCxxCompiler = providers.environmentVariable("CXX").orElse("c++").get()
 def hostJniBuildDir = layout.buildDirectory.dir("nativeHostJniTest")
-def hostJniLibraryName = isMacHost ? "libobservability_logger_host_jni.dylib"
-        : "libobservability_logger_host_jni.so"
+def hostJniLibraryName = isMacHost ? "liboutbox_host_jni.dylib"
+        : "liboutbox_host_jni.so"
 def hostJniLibrary = hostJniBuildDir.map { it.file(hostJniLibraryName).asFile }
-def hostJniControlObject = hostJniBuildDir.map { it.file("observability_logger_control.o").asFile }
-def hostJniCoreObject = hostJniBuildDir.map { it.file("observability_logger_core.o").asFile }
-def hostJniFrameObject = hostJniBuildDir.map { it.file("observability_logger_frame.o").asFile }
-def hostJniQueueObject = hostJniBuildDir.map { it.file("observability_logger_queue.o").asFile }
-def hostJniSpoolObject = hostJniBuildDir.map { it.file("observability_logger_spool.o").asFile }
-def hostJniWriterObject = hostJniBuildDir.map { it.file("observability_logger_writer.o").asFile }
-def hostJniProductionBridgeObject = hostJniBuildDir.map { it.file("observability_logger_jni.o").asFile }
-def hostJniTestBridgeObject = hostJniBuildDir.map { it.file("observability_logger_host_jni_test.o").asFile }
+def hostJniControlObject = hostJniBuildDir.map { it.file("outbox_control.o").asFile }
+def hostJniCoreObject = hostJniBuildDir.map { it.file("outbox_core.o").asFile }
+def hostJniFrameObject = hostJniBuildDir.map { it.file("outbox_frame.o").asFile }
+def hostJniQueueObject = hostJniBuildDir.map { it.file("outbox_queue.o").asFile }
+def hostJniSpoolObject = hostJniBuildDir.map { it.file("outbox_spool.o").asFile }
+def hostJniWriterObject = hostJniBuildDir.map { it.file("outbox_writer.o").asFile }
+def hostJniProductionBridgeObject = hostJniBuildDir.map { it.file("outbox_jni.o").asFile }
+def hostJniTestBridgeObject = hostJniBuildDir.map { it.file("outbox_host_jni_test.o").asFile }
 def jniJavaHome = providers.systemProperty("java.home").get()
 def jniIncludeDir = file("${jniJavaHome}/include")
 def jniPlatformIncludeDir = file("${jniJavaHome}/include/${isMacHost ? "darwin" : "linux"}")
@@ -54,21 +54,21 @@ def nativeStressMaxRecordBytes = providers.gradleProperty("androidOutboxStressMa
         .orElse("512")
 
 def nativeMainSources = [
-        file("src/main/cpp/observability_logger_control.c"),
-        file("src/main/cpp/observability_logger_core.c"),
-        file("src/main/cpp/observability_logger_frame.c"),
-        file("src/main/cpp/observability_logger_queue.c"),
-        file("src/main/cpp/observability_logger_spool.c"),
-        file("src/main/cpp/observability_logger_writer.c"),
+        file("src/main/cpp/outbox_control.c"),
+        file("src/main/cpp/outbox_core.c"),
+        file("src/main/cpp/outbox_frame.c"),
+        file("src/main/cpp/outbox_queue.c"),
+        file("src/main/cpp/outbox_spool.c"),
+        file("src/main/cpp/outbox_writer.c"),
 ]
 def nativeMainHeaders = [
-        file("src/main/cpp/observability_logger_control.h"),
-        file("src/main/cpp/observability_logger_core.h"),
-        file("src/main/cpp/observability_logger_frame.h"),
-        file("src/main/cpp/observability_logger_internal.h"),
-        file("src/main/cpp/observability_logger_queue.h"),
-        file("src/main/cpp/observability_logger_spool.h"),
-        file("src/main/cpp/observability_logger_writer.h"),
+        file("src/main/cpp/outbox_control.h"),
+        file("src/main/cpp/outbox_core.h"),
+        file("src/main/cpp/outbox_frame.h"),
+        file("src/main/cpp/outbox_internal.h"),
+        file("src/main/cpp/outbox_queue.h"),
+        file("src/main/cpp/outbox_spool.h"),
+        file("src/main/cpp/outbox_writer.h"),
 ]
 def nativeHostCompilerArgs = [
         "-std=c17",
@@ -100,7 +100,7 @@ tasks.register("compileNativeHostTest", Exec) {
         !isWindowsHost
     }
 
-    inputs.files(nativeMainSources, nativeMainHeaders, file("src/hostTest/c/observability_logger_core_test.c"))
+    inputs.files(nativeMainSources, nativeMainHeaders, file("src/hostTest/c/outbox_core_test.c"))
     outputs.file(hostTestBinary)
 
     doFirst {
@@ -111,7 +111,7 @@ tasks.register("compileNativeHostTest", Exec) {
                     nativeHostCompilerArgs +
                     nativeMainSources.collect { it.absolutePath } +
                     [
-                            file("src/hostTest/c/observability_logger_core_test.c").absolutePath,
+                            file("src/hostTest/c/outbox_core_test.c").absolutePath,
                             "-o",
                             hostTestBinary.get().absolutePath,
                     ],
@@ -139,7 +139,7 @@ tasks.register("compileNativeHostStressTest", Exec) {
     inputs.files(
             nativeMainSources,
             nativeMainHeaders,
-            file("src/hostTest/c/observability_logger_core_stress_test.c"),
+            file("src/hostTest/c/outbox_core_stress_test.c"),
     )
     outputs.file(hostStressTestBinary)
 
@@ -151,7 +151,7 @@ tasks.register("compileNativeHostStressTest", Exec) {
                     nativeHostCompilerArgs +
                     nativeMainSources.collect { it.absolutePath } +
                     [
-                            file("src/hostTest/c/observability_logger_core_stress_test.c").absolutePath,
+                            file("src/hostTest/c/outbox_core_stress_test.c").absolutePath,
                             "-o",
                             hostStressTestBinary.get().absolutePath,
                     ],
@@ -240,98 +240,98 @@ def registerHostJniCxxObject = { String taskName,
 registerHostJniCObject(
         "compileNativeHostJniCoreObject",
         "Compiles the AndroidOutBox C core for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_core.c"),
+        file("src/main/cpp/outbox_core.c"),
         hostJniCoreObject,
         [
-                file("src/main/cpp/observability_logger_control.h"),
-                file("src/main/cpp/observability_logger_core.c"),
-                file("src/main/cpp/observability_logger_core.h"),
-                file("src/main/cpp/observability_logger_frame.h"),
-                file("src/main/cpp/observability_logger_internal.h"),
-                file("src/main/cpp/observability_logger_queue.h"),
-                file("src/main/cpp/observability_logger_spool.h"),
-                file("src/main/cpp/observability_logger_writer.h"),
+                file("src/main/cpp/outbox_control.h"),
+                file("src/main/cpp/outbox_core.c"),
+                file("src/main/cpp/outbox_core.h"),
+                file("src/main/cpp/outbox_frame.h"),
+                file("src/main/cpp/outbox_internal.h"),
+                file("src/main/cpp/outbox_queue.h"),
+                file("src/main/cpp/outbox_spool.h"),
+                file("src/main/cpp/outbox_writer.h"),
         ],
 )
 registerHostJniCObject(
         "compileNativeHostJniControlObject",
         "Compiles the AndroidOutBox control plane for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_control.c"),
+        file("src/main/cpp/outbox_control.c"),
         hostJniControlObject,
         [
-                file("src/main/cpp/observability_logger_control.c"),
-                file("src/main/cpp/observability_logger_control.h"),
-                file("src/main/cpp/observability_logger_core.h"),
-                file("src/main/cpp/observability_logger_frame.h"),
-                file("src/main/cpp/observability_logger_internal.h"),
-                file("src/main/cpp/observability_logger_spool.h"),
+                file("src/main/cpp/outbox_control.c"),
+                file("src/main/cpp/outbox_control.h"),
+                file("src/main/cpp/outbox_core.h"),
+                file("src/main/cpp/outbox_frame.h"),
+                file("src/main/cpp/outbox_internal.h"),
+                file("src/main/cpp/outbox_spool.h"),
         ],
 )
 registerHostJniCObject(
         "compileNativeHostJniFrameObject",
         "Compiles the AndroidOutBox frame helpers for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_frame.c"),
+        file("src/main/cpp/outbox_frame.c"),
         hostJniFrameObject,
         [
-                file("src/main/cpp/observability_logger_frame.c"),
-                file("src/main/cpp/observability_logger_frame.h"),
+                file("src/main/cpp/outbox_frame.c"),
+                file("src/main/cpp/outbox_frame.h"),
         ],
 )
 registerHostJniCObject(
         "compileNativeHostJniQueueObject",
         "Compiles the AndroidOutBox queue helpers for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_queue.c"),
+        file("src/main/cpp/outbox_queue.c"),
         hostJniQueueObject,
         [
-                file("src/main/cpp/observability_logger_internal.h"),
-                file("src/main/cpp/observability_logger_queue.c"),
-                file("src/main/cpp/observability_logger_queue.h"),
+                file("src/main/cpp/outbox_internal.h"),
+                file("src/main/cpp/outbox_queue.c"),
+                file("src/main/cpp/outbox_queue.h"),
         ],
 )
 registerHostJniCObject(
         "compileNativeHostJniSpoolObject",
         "Compiles the AndroidOutBox spool helpers for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_spool.c"),
+        file("src/main/cpp/outbox_spool.c"),
         hostJniSpoolObject,
         [
-                file("src/main/cpp/observability_logger_frame.h"),
-                file("src/main/cpp/observability_logger_internal.h"),
-                file("src/main/cpp/observability_logger_spool.c"),
-                file("src/main/cpp/observability_logger_spool.h"),
+                file("src/main/cpp/outbox_frame.h"),
+                file("src/main/cpp/outbox_internal.h"),
+                file("src/main/cpp/outbox_spool.c"),
+                file("src/main/cpp/outbox_spool.h"),
         ],
 )
 registerHostJniCObject(
         "compileNativeHostJniWriterObject",
         "Compiles the AndroidOutBox writer loop for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_writer.c"),
+        file("src/main/cpp/outbox_writer.c"),
         hostJniWriterObject,
         [
-                file("src/main/cpp/observability_logger_frame.h"),
-                file("src/main/cpp/observability_logger_internal.h"),
-                file("src/main/cpp/observability_logger_queue.h"),
-                file("src/main/cpp/observability_logger_spool.h"),
-                file("src/main/cpp/observability_logger_writer.c"),
-                file("src/main/cpp/observability_logger_writer.h"),
+                file("src/main/cpp/outbox_frame.h"),
+                file("src/main/cpp/outbox_internal.h"),
+                file("src/main/cpp/outbox_queue.h"),
+                file("src/main/cpp/outbox_spool.h"),
+                file("src/main/cpp/outbox_writer.c"),
+                file("src/main/cpp/outbox_writer.h"),
         ],
 )
 registerHostJniCxxObject(
         "compileNativeHostJniProductionBridgeObject",
         "Compiles the production JNI bridge for the host JNI shared library.",
-        file("src/main/cpp/observability_logger_jni.cpp"),
+        file("src/main/cpp/outbox_jni.cpp"),
         hostJniProductionBridgeObject,
         [
-                file("src/main/cpp/observability_logger_core.h"),
-                file("src/main/cpp/observability_logger_jni.cpp"),
+                file("src/main/cpp/outbox_core.h"),
+                file("src/main/cpp/outbox_jni.cpp"),
         ],
 )
 registerHostJniCxxObject(
         "compileNativeHostJniTestBridgeObject",
         "Compiles the host-only JNI bridge for JVM integration tests.",
-        file("src/hostTest/c/observability_logger_host_jni_test.cpp"),
+        file("src/hostTest/c/outbox_host_jni_test.cpp"),
         hostJniTestBridgeObject,
         [
-                file("src/main/cpp/observability_logger_core.h"),
-                file("src/hostTest/c/observability_logger_host_jni_test.cpp"),
+                file("src/main/cpp/outbox_core.h"),
+                file("src/hostTest/c/outbox_host_jni_test.cpp"),
         ],
 )
 
