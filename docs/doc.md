@@ -3,6 +3,7 @@
 ## Table of Contents
 
 - [Why It Exists](#why-it-exists)
+- [Scope Boundary](#scope-boundary)
 - [When To Use It](#when-to-use-it)
 - [When Not To Use It](#when-not-to-use-it)
 - [Core Model](#core-model)
@@ -47,6 +48,47 @@ AndroidOutBox protects the application first. Records may be dropped under
 memory pressure, disk limits, retention limits, storage cleanup, corruption, or
 other runtime constraints. Application behavior must never depend on an outbox
 write succeeding.
+
+## Scope Boundary
+
+AndroidOutBox is intentionally strict about scope. It does not try to observe
+the whole application, infer user intent, or become a second runtime inside the
+app.
+
+Many observability SDKs provide value by automatically collecting a wide range
+of signals: exceptions, breadcrumbs, lifecycle events, network tracing,
+performance spans, ANR or crash data, device context, user actions, and
+background delivery. That can be convenient when an app wants a plug-and-play
+observability product, but every enabled SDK also gets closer to core runtime
+ownership.
+
+The cost becomes more visible when an app combines several large SDKs. Multiple
+SDKs may instrument similar layers, collect overlapping context, compete for
+startup time, allocate on hot paths, register lifecycle hooks, schedule
+background work, or add vendor-specific payload assumptions. The result can be
+more coupling, more runtime behavior to reason about, and a higher chance that
+telemetry work affects the user experience it is supposed to measure.
+
+AndroidOutBox chooses a smaller contract:
+
+```text
+app detects a meaningful event
+app chooses the context worth keeping
+write best-effort record to AndroidOutBox
+app-owned sink drains records in batches
+ACK only after the sink succeeds
+```
+
+The caller must explicitly emit the record. AndroidOutBox does not capture
+network calls, exceptions, lifecycle changes, user actions, or device state on
+its own. That is deliberate. The domain layer usually knows which failures are
+meaningful; the outbox only provides a bounded place to hold those records until
+an app-owned consumer drains them.
+
+This library is not extreme about reliability. It is extreme about scope. It
+does not try to keep everything, capture everything, or send everything at any
+cost. It protects the app first and leaves product semantics, privacy,
+sampling, retry policy, and backend choice to the application.
 
 ## When To Use It
 

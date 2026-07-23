@@ -11,6 +11,11 @@ AndroidOutBox protects the application first. Records are best-effort and may
 be discarded under memory pressure, disk limits, retention limits, storage
 cleanup, corruption, or other runtime constraints.
 
+The app must explicitly decide what is worth recording. AndroidOutBox does not
+auto-capture exceptions, lifecycle events, network calls, breadcrumbs, user
+actions, or device context. It provides a bounded local handoff point; the app
+keeps ownership of meaning, privacy, retry policy, and network delivery.
+
 ## Core Responsibility
 
 - accept structured or text records from app code
