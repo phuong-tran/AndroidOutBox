@@ -4,8 +4,8 @@ AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
 
 It is not a Logcat reader. It is not a crash reporter. It is not an
-observability SDK. It is not tied to Sentry, Datadog, Firebase, Hilt,
-WorkManager, or any backend.
+observability SDK. It is not tied to Sentry, Datadog, Firebase, WorkManager, or
+any backend.
 
 AndroidOutBox protects the application first. Records are best-effort and may
 be discarded under memory pressure, disk limits, retention limits, storage

@@ -8,6 +8,7 @@
 - [Core Model](#core-model)
 - [Runtime Flow](#runtime-flow)
 - [Delivery Guarantees](#delivery-guarantees)
+- [How Outbox Files Work](#how-outbox-files-work)
 - [Storage Directory](#storage-directory)
 - [Process Ownership](#process-ownership)
 - [Network Sinks](#network-sinks)
@@ -197,6 +198,56 @@ Provider cursors isolate delivery progress, not retention. Multiple provider
 ids can advance independently, but all providers still share the same bounded
 spool budget. A slow provider can lose old unacknowledged records when retention
 removes old segments to protect application resources.
+
+## How Outbox Files Work
+
+AndroidOutBox stores accepted records in native-managed spool files. These files
+are not plain append-only logs for humans to tail. They are the durable side of a
+bounded outbox, so the important behavior is rotation, cursor movement, and ACK.
+
+The write path is intentionally simple:
+
+1. App code calls `write()` with a compact record.
+2. Native accepts the record into a bounded queue when capacity allows it.
+3. A writer thread drains the queue into the active spool segment.
+4. Native rings a doorbell when durable records may be available.
+
+Spool files are split into numbered segments. The active segment is appended to
+until it reaches the configured segment size limit, then AndroidOutBox rotates
+to a new segment. Old segments are retained only within the configured storage
+budget. This keeps disk use bounded and prevents telemetry from becoming more
+important than the application.
+
+Each provider has its own cursor. A provider is just a consumer id chosen by the
+app, such as `default`, `sentry`, `loki`, or `debug-upload`. Native does not
+know what those providers mean. It only tracks where each provider has
+successfully committed delivery progress.
+
+`readNextBatch()` is a peek operation. It reads from the provider cursor and
+returns records plus an opaque ACK token, but it does not remove records and it
+does not advance the durable cursor.
+
+```text
+readNextBatch(providerId) = show this provider the next retained records
+```
+
+`ack()` is the commit operation. The app should call it only after the provider
+has successfully handled the batch, for example after a network sink returns
+success.
+
+```text
+ack(providerId, ackToken) = this provider completed delivery up to this point
+```
+
+If a provider fails to upload, the app should not ACK. A later retry can read the
+same batch again while the records are still retained. If the app process is
+killed before ACK, the provider cursor remains behind, so startup drain can
+resume from the last committed cursor.
+
+This is still bounded best-effort delivery. ACK controls consumer progress, not
+infinite retention. If old segments must be deleted because of retention limits,
+disk pressure, cleanup, or corruption handling, unacknowledged records in those
+segments are lost for any provider that has not advanced past them.
 
 ## Storage Directory
 
