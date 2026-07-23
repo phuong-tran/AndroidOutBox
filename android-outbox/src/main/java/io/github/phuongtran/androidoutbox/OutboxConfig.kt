@@ -3,13 +3,13 @@ package io.github.phuongtran.androidoutbox
 /**
  * Runtime limits for the native file writer.
  *
- * Defaults are intentionally small because this logger is expected to absorb
+ * Defaults are intentionally small because this outbox is expected to absorb
  * bursts and preserve recent failure context, not become long-term storage.
  *
  * @property spoolDirectoryPath App-private directory where native segment and
  * cursor files are stored. Prefer `noBackupFilesDir` or `filesDir` when pending
  * records should survive normal cache cleanup. Use `cacheDir` only when records
- * may be discarded by the operating system. The logger owns files inside this
+ * may be discarded by the operating system. The outbox owns files inside this
  * directory and may delete old segment files to enforce [maxArchivedSegments].
  * @property defaultProviderId Opaque delivery cursor id used by the default
  * drain path. Native does not know what backend or consumer this id represents.
@@ -29,7 +29,7 @@ package io.github.phuongtran.androidoutbox
  * @property maxArchivedSegments Number of rolled segment files to retain beside
  * the active segment. When the segment count exceeds this value plus the active
  * segment, oldest segments are deleted even if they have not been uploaded yet.
- * This keeps the logger best-effort and bounded rather than an unbounded audit
+ * This keeps the outbox best-effort and bounded rather than an unbounded audit
  * log.
  */
 data class OutboxConfig(

@@ -1,13 +1,13 @@
 package io.github.phuongtran.androidoutbox
 
 /**
- * Snapshot of native logger health counters.
+ * Snapshot of native outbox health counters.
  *
- * These values are diagnostics for the logger runtime itself, not business
+ * These values are diagnostics for the outbox runtime itself, not business
  * payload metadata. They help Kotlin detect queue pressure, writer failures,
  * and retention behavior without inspecting native files directly.
  *
- * @property isStarted Whether the native logger has accepted its runtime
+ * @property isStarted Whether the native outbox has accepted its runtime
  * configuration and started writer ownership.
  * @property queueCapacity Number of records the native MPSC queue can hold.
  * @property queueDepth Approximate number of records waiting in memory.

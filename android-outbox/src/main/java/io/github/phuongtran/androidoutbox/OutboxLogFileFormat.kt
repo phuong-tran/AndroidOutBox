@@ -1,13 +1,13 @@
 package io.github.phuongtran.androidoutbox
 
 /**
- * Stable line format written by the native logger and consumed by Kotlin.
+ * Stable line format written by the native outbox and consumed by Kotlin.
  *
  * Format:
  * wall_time_ms<TAB>sequence<TAB>level<TAB>category<TAB>payload<LF>
  *
  * Payload must be compact, sanitized, and single-line before it is submitted to
- * the logger. The native layer treats payload as opaque text.
+ * the outbox. The native layer treats payload as opaque text.
  */
 object OutboxLogFileFormat {
     const val FIELD_DELIMITER = '\t'

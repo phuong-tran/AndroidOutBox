@@ -4,7 +4,7 @@ import java.io.Closeable
 import java.nio.ByteBuffer
 
 /**
- * Byte-oriented bridge between Kotlin control logic and the native logger.
+ * Byte-oriented bridge between Kotlin control logic and the native outbox.
  *
  * The transport deliberately does not know command ids, response layouts, or
  * record semantics. Production uses Android-owned pipe file descriptors, while

@@ -34,6 +34,18 @@ def canBuildHostJni = !isWindowsHost && jniIncludeDir.exists() && jniPlatformInc
 def isHostJniEnabled = providers.gradleProperty("androidOutboxHostJni")
         .map { it.toBoolean() }
         .orElse(false)
+// Host JNI race diagnostics are separate from the regular integration path so
+// the normal protocol test remains small and stable. Run it explicitly with:
+// ./gradlew :android-outbox:testDebugUnitTest \
+//   --tests "io.github.phuongtran.androidoutbox.OutboxHostJniShutdownRaceTest" \
+//   -PandroidOutboxHostJniRace=true \
+//   --console=plain
+def isHostJniRaceEnabled = providers.gradleProperty("androidOutboxHostJniRace")
+        .map { it.toBoolean() }
+        .orElse(false)
+def isAnyHostJniEnabled = providers.provider {
+    isHostJniEnabled.get() || isHostJniRaceEnabled.get()
+}
 
 // Stress is an opt-in diagnostic target, not part of CI smoke tests. It is
 // intentionally gated because it writes many records and its runtime depends on
@@ -184,7 +196,7 @@ def registerHostJniCObject = { String taskName,
         group = "verification"
         description = taskDescription
         onlyIf {
-            canBuildHostJni && isHostJniEnabled.get()
+            canBuildHostJni && isAnyHostJniEnabled.get()
         }
 
         inputs.files(inputFiles)
@@ -215,7 +227,7 @@ def registerHostJniCxxObject = { String taskName,
         group = "verification"
         description = taskDescription
         onlyIf {
-            canBuildHostJni && isHostJniEnabled.get()
+            canBuildHostJni && isAnyHostJniEnabled.get()
         }
 
         inputs.files(inputFiles)
@@ -349,7 +361,7 @@ tasks.register("compileNativeHostJniTestLibrary", Exec) {
             "compileNativeHostJniTestBridgeObject",
     )
     onlyIf {
-        canBuildHostJni && isHostJniEnabled.get()
+        canBuildHostJni && isAnyHostJniEnabled.get()
     }
 
     inputs.files(
@@ -384,7 +396,7 @@ tasks.register("compileNativeHostJniTestLibrary", Exec) {
 tasks.matching { task ->
     task.name == "testDebugUnitTest"
 }.configureEach { task ->
-    if (canBuildHostJni && isHostJniEnabled.get()) {
+    if (canBuildHostJni && isAnyHostJniEnabled.get()) {
         task.dependsOn("compileNativeHostJniTestLibrary")
         task.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED")
         task.testLogging {
@@ -396,6 +408,7 @@ tasks.matching { task ->
         task.outputs.upToDateWhen { false }
         task.doFirst {
             systemProperty("androidoutbox.hostJniLibrary", hostJniLibrary.get().absolutePath)
+            systemProperty("androidoutbox.hostJniRace", isHostJniRaceEnabled.get().toString())
         }
     }
 }

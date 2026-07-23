@@ -168,16 +168,39 @@ Run the regular Kotlin/JVM unit tests:
 ./gradlew :android-outbox:testDebugUnitTest --console=plain
 ```
 
-Run the host-native tests for the C core and host JNI bridge:
+Run the host-native smoke test for the C core:
 
 ```bash
 ./gradlew :android-outbox:testNativeHost --console=plain
 ```
 
+Run the opt-in host JNI integration test:
+
+```bash
+./gradlew :android-outbox:testDebugUnitTest \
+  --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
+  -PandroidOutboxHostJni=true \
+  --console=plain
+```
+
 These host tests compile and execute the native outbox core on the development
-machine. They are useful for validating cursor/ACK behavior, file persistence,
-provider isolation, and JNI command framing without installing the sample app on
-a device.
+machine. The JNI integration path also builds a host-loadable shared library
+from the production C/JNI objects, then validates cursor/ACK behavior, file
+persistence, provider isolation, and JNI command framing without installing the
+sample app on a device.
+
+Run the host JNI shutdown race diagnostic separately:
+
+```bash
+./gradlew :android-outbox:testDebugUnitTest \
+  --tests "io.github.phuongtran.androidoutbox.OutboxHostJniShutdownRaceTest" \
+  -PandroidOutboxHostJniRace=true \
+  --console=plain
+```
+
+Keep race and stress diagnostics opt-in. They are useful when changing
+lifecycle, pipe, queue, file, cursor, frame, or ACK logic, but they should not
+change the normal developer feedback loop.
 
 Native stress tests are opt-in so normal development and CI do not pay the cost
 unless explicitly requested:
@@ -186,8 +209,8 @@ unless explicitly requested:
 ./gradlew :android-outbox:testNativeHostStress -PandroidOutboxStress=true --console=plain
 ```
 
-Use the stress task when changing queue, file, cursor, frame, or ACK logic and
-you want a heavier confidence check.
+Use the stress task when you want a heavier confidence check for the native
+producer/writer path.
 
 ## Build
 
