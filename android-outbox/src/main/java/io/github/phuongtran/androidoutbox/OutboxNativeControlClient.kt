@@ -79,7 +79,7 @@ internal class OutboxNativeControlClient(
      * Stops the native writer thread but keeps the control pipes available long
      * enough for Kotlin to close them in an ordered shutdown.
      */
-    fun stopNativeLogger(): Boolean {
+    fun stopNativeOutbox(): Boolean {
         return sendCommandAndReadOk(
             command = OutboxControlCommandEncoder.COMMAND_STOP,
         ) { sequence ->

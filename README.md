@@ -95,9 +95,9 @@ outbox.start(
 )
 
 outbox.write(
-    level = OutboxRecordLevel.INFO,
-    category = "sample.event",
-    payload = """{"message":"hello"}""",
+    level = OutboxRecordLevel.ERROR,
+    category = "checkout.failure",
+    payload = """{"errorCode":"CHK_400","httpStatus":400}""",
 )
 
 outbox.flush()

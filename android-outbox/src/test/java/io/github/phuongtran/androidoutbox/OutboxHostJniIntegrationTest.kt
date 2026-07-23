@@ -214,7 +214,7 @@ class OutboxHostJniIntegrationTest {
             )
             return block(client, spoolDirectory)
         } finally {
-            client.stopNativeLogger()
+            client.stopNativeOutbox()
             client.closeNativePipes()
             client.close()
             // Test artifacts must not leak into /tmp; keep cleanup quiet unless

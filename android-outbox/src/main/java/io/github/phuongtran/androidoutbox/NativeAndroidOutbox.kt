@@ -52,7 +52,7 @@ object NativeAndroidOutbox : AndroidOutbox {
                 }
             }
         }
-        client.stopNativeLogger()
+        client.stopNativeOutbox()
         client.closeNativePipes()
         client.close()
     }
