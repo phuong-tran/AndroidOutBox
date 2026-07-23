@@ -56,36 +56,6 @@ The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
 for Android ABIs. Gradle metadata, POM metadata, source jar, and checksums are
 also committed under `maven/`.
 
-## Static Maven Publishing
-
-To regenerate the static Maven repository under `maven/`:
-
-```bash
-./gradlew :android-outbox:publishReleasePublicationToGitHubStaticMavenRepository --console=plain
-```
-
-Commit the generated `maven/` directory and push it to GitHub. After that,
-consumers can resolve the artifact from:
-
-```text
-https://raw.githubusercontent.com/phuong-tran/AndroidOutBox/main/maven
-```
-
-For local-only integration testing, publish to Maven local and consume the same
-coordinate from `mavenLocal()`:
-
-```bash
-./gradlew :android-outbox:publishReleasePublicationToMavenLocal --console=plain
-```
-
-Release checklist:
-
-- update `VERSION_NAME` in `gradle.properties`
-- run the static Maven publish task
-- verify the generated AAR contains `libandroid_outbox.so` for all Android ABIs
-- commit source changes and the generated `maven/` files together
-- push to GitHub
-
 ## Kotlin API
 
 ```kotlin
@@ -165,7 +135,6 @@ benchmark for the native outbox.
 ./gradlew :android-outbox:testNativeHost
 ./gradlew :android-outbox:testDebugUnitTest
 ./gradlew :android-outbox:assembleDebug
-./gradlew :android-outbox:publishReleasePublicationToMavenLocal --console=plain
 ./gradlew :app:assembleDebug --console=plain
 ```
 
