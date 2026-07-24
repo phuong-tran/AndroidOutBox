@@ -1,6 +1,5 @@
 package io.github.phuongtran.androidoutbox
 
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

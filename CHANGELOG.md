@@ -2,6 +2,11 @@
 
 All notable project changes are documented here.
 
+## 1.3.6 - 2026-07-24
+
+- Removed an unused coroutine import from `AndroidOutboxSinkRunner`.
+- Published static Maven artifacts under `maven/` for `1.3.6`.
+
 ## 1.3.5 - 2026-07-24
 
 - Added `AndroidOutboxSinkRunner` to centralize one ordered drain path per provider cursor.

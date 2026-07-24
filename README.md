@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml/badge.svg)](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.5-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](#installation)
 
 AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
@@ -87,7 +87,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.5")
+implementation("io.github.phuongtran:android-outbox:1.3.6")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
