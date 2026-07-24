@@ -7,10 +7,11 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Base class for app-owned sink runners.
  *
- * Applications extend this class and implement [send]. The runner owns the
- * read/send/ACK sequence for one provider id, so competing doorbell, app-start,
- * connectivity, or manual retry triggers cannot drain the same cursor in
- * parallel.
+ * Applications can either use the top-level `AndroidOutboxSinkRunner(...)`
+ * factory with a send lambda, or extend this class when custom doorbell
+ * filtering is needed. The runner owns the read/send/ACK sequence for one
+ * provider id, so competing doorbell, app-start, connectivity, or manual retry
+ * triggers cannot drain the same cursor in parallel.
  *
  * AndroidOutBox stays backend-agnostic. The provider id is an opaque cursor
  * name, and [send] decides whether records go to a remote endpoint, a local
@@ -135,5 +136,49 @@ abstract class AndroidOutboxSinkRunner(
 
     companion object {
         const val DEFAULT_MAX_BATCHES_PER_DRAIN = 16
+    }
+}
+
+/**
+ * Creates a lambda-backed sink runner for the common composition-first case.
+ *
+ * Use this overload when the app only needs to decide where one batch is sent.
+ * Extend [AndroidOutboxSinkRunner] directly when a sink needs to override
+ * doorbell filtering or add richer behavior around [AndroidOutboxSinkRunner.run].
+ */
+fun AndroidOutboxSinkRunner(
+    outbox: AndroidOutbox,
+    providerId: String = OutboxConfig.DEFAULT_PROVIDER_ID,
+    maxRecords: Int = OutboxRecordStore.DEFAULT_MAX_RECORDS,
+    maxBytes: Int = OutboxRecordStore.DEFAULT_MAX_BYTES,
+    maxBatchesPerDrain: Int = AndroidOutboxSinkRunner.DEFAULT_MAX_BATCHES_PER_DRAIN,
+    send: suspend (records: List<String>) -> Boolean,
+): AndroidOutboxSinkRunner {
+    return LambdaAndroidOutboxSinkRunner(
+        outbox = outbox,
+        providerId = providerId,
+        maxRecords = maxRecords,
+        maxBytes = maxBytes,
+        maxBatchesPerDrain = maxBatchesPerDrain,
+        sendBlock = send,
+    )
+}
+
+private class LambdaAndroidOutboxSinkRunner(
+    outbox: AndroidOutbox,
+    providerId: String,
+    maxRecords: Int,
+    maxBytes: Int,
+    maxBatchesPerDrain: Int,
+    private val sendBlock: suspend (records: List<String>) -> Boolean,
+) : AndroidOutboxSinkRunner(
+    outbox = outbox,
+    providerId = providerId,
+    maxRecords = maxRecords,
+    maxBytes = maxBytes,
+    maxBatchesPerDrain = maxBatchesPerDrain,
+) {
+    override suspend fun send(records: List<String>): Boolean {
+        return sendBlock(records)
     }
 }

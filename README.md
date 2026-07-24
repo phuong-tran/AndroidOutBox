@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml/badge.svg)](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-1.3.7-blue.svg)](#installation)
 
 AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
@@ -87,7 +87,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.6")
+implementation("io.github.phuongtran:android-outbox:1.3.7")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
@@ -127,23 +127,17 @@ if (batch != null) {
 }
 ```
 
-For production sinks, centralize read/send/ACK ownership by extending
+For production sinks, centralize read/send/ACK ownership with
 `AndroidOutboxSinkRunner`:
 
 ```kotlin
-class MyOutboxRunner(
-    outbox: AndroidOutbox,
-    private val transport: MyTransport,
-) : AndroidOutboxSinkRunner(
+val runner = AndroidOutboxSinkRunner(
     outbox = outbox,
     providerId = "primary",
-) {
-    override suspend fun send(records: List<String>): Boolean {
-        return transport.post(records)
-    }
+) { records ->
+    transport.post(records)
 }
 
-val runner = MyOutboxRunner(outbox, transport)
 val doorbells = BlockingOutboxDoorbellChannel(outbox)
 
 scope.launch {
@@ -176,6 +170,7 @@ operating system.
 Read [docs/doc.md](docs/doc.md) for the design rationale, intended use cases,
 doorbell/read/ACK model, sink orchestration rules, and crash logging boundary.
 
+Manual test and diagnostic commands are in [docs/testing.md](docs/testing.md).
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
 guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -206,78 +201,21 @@ benchmark for the native outbox.
 
 ## Testing
 
-Run the regular Kotlin/JVM unit tests:
+Run the regular unit tests:
 
 ```bash
 ./gradlew :android-outbox:testDebugUnitTest --console=plain
 ```
 
-Run the host-native smoke test for the C core:
+Run lint and build the release AAR:
 
 ```bash
-./gradlew :android-outbox:testNativeHost \
-  -PandroidOutboxHostNative=true \
-  --console=plain
+./gradlew :android-outbox:lintRelease :android-outbox:assembleRelease --console=plain
 ```
 
-Run the opt-in host JNI integration test:
-
-```bash
-./gradlew :android-outbox:testDebugUnitTest \
-  --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
-  -PandroidOutboxHostJni=true \
-  --console=plain
-```
-
-These host tests compile and execute the native outbox core on the development
-machine. The JNI integration path also builds a host-loadable shared library
-from the production C/JNI objects, then validates cursor/ACK behavior, file
-persistence, provider isolation, and JNI command framing without installing the
-sample app on a device.
-
-Run the host JNI shutdown race diagnostic separately:
-
-```bash
-./gradlew :android-outbox:testDebugUnitTest \
-  --tests "io.github.phuongtran.androidoutbox.OutboxHostJniShutdownRaceTest" \
-  -PandroidOutboxHostJniRace=true \
-  --console=plain
-```
-
-Keep race and stress diagnostics opt-in. They are useful when changing
-lifecycle, pipe, queue, file, cursor, frame, or ACK logic, but they should not
-change the normal developer feedback loop.
-
-Native stress tests are opt-in so normal development and CI do not pay the cost
-unless explicitly requested:
-
-```bash
-./gradlew :android-outbox:testNativeHostStress \
-  -PandroidOutboxStress=true \
-  --console=plain
-```
-
-Use the stress task when you want a heavier confidence check for the native
-producer/writer path.
-
-Copy/paste these command lines when sharing manual review instructions:
-
-```bash
-./gradlew :android-outbox:testNativeHost \
-  -PandroidOutboxHostNative=true \
-  --console=plain
-
-./gradlew :android-outbox:testNativeHostStress \
-  -PandroidOutboxStress=true \
-  --console=plain
-```
-
-When you need clean JSON for copy/paste, filter from the first JSON line:
-
-```bash
-./gradlew -q :android-outbox:testNativeHost \
-  -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
-```
+Native smoke, stress, host JNI, and shutdown race diagnostics are documented in
+[docs/testing.md](docs/testing.md). They stay opt-in so the normal developer
+and CI loop remains small.
 
 ## Build
 

@@ -2,6 +2,13 @@
 
 All notable project changes are documented here.
 
+## 1.3.7 - 2026-07-24
+
+- Added a lambda-backed `AndroidOutboxSinkRunner(...)` factory for composition-first sink setup.
+- Kept direct `AndroidOutboxSinkRunner` extension available for custom doorbell filtering.
+- Moved detailed native/JNI/stress diagnostic commands from README to `docs/testing.md`.
+- Published static Maven artifacts under `maven/` for `1.3.7`.
+
 ## 1.3.6 - 2026-07-24
 
 - Removed an unused coroutine import from `AndroidOutboxSinkRunner`.

@@ -67,6 +67,32 @@ class AndroidOutboxSinkRunnerTest {
     }
 
     @Test
+    fun `factory creates lambda backed sink runner`() = runBlocking {
+        val sentBatches = mutableListOf<List<String>>()
+        val outbox = FakeAndroidOutbox(
+            batches = listOf(
+                batch(token = "1", records = listOf("first")),
+            ),
+        )
+        val runner = AndroidOutboxSinkRunner(
+            outbox = outbox,
+            providerId = "primary",
+        ) { records ->
+            sentBatches += records
+            true
+        }
+
+        val result = runner.drainAvailable()
+
+        assertEquals(1, result.readBatches)
+        assertEquals(1, result.sentRecords)
+        assertEquals(1, result.ackedBatches)
+        assertFalse(result.stoppedByFailure)
+        assertEquals(listOf("1"), outbox.ackedTokens)
+        assertEquals(listOf(listOf("first")), sentBatches)
+    }
+
+    @Test
     fun `concurrent drain calls are serialized for one provider cursor`() = runBlocking {
         val firstSendStarted = CompletableDeferred<Unit>()
         val releaseFirstSend = CompletableDeferred<Unit>()

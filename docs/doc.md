@@ -425,20 +425,16 @@ class LokiOutboxSink(
 }
 ```
 
-For production code, prefer adapting that sink through `AndroidOutboxSinkRunner`
-instead of letting multiple call sites read and ACK batches directly:
+For production code, prefer adapting that sink through the
+`AndroidOutboxSinkRunner(...)` factory instead of letting multiple call sites
+read and ACK batches directly:
 
 ```kotlin
-class ProviderOutboxRunner(
+val runner = AndroidOutboxSinkRunner(
     outbox: AndroidOutbox,
-    private val sink: OutboxSink,
-) : AndroidOutboxSinkRunner(
-    outbox = outbox,
     providerId = sink.providerId,
-) {
-    override suspend fun send(records: List<String>): Boolean {
-        return sink.send(records)
-    }
+) { records ->
+    sink.send(records)
 }
 ```
 
@@ -457,10 +453,12 @@ val sink = SentryOutboxSink(
     endpoint = sentryEndpoint,
     httpClient = httpClient,
 )
-val runner = ProviderOutboxRunner(
+val runner = AndroidOutboxSinkRunner(
     outbox = outbox,
-    sink = sink,
-)
+    providerId = sink.providerId,
+) { records ->
+    sink.send(records)
+}
 
 scope.launch {
     runner.run(doorbells)
@@ -497,8 +495,10 @@ cursor of another backend.
 AndroidOutBox expects the application to centralize drain ownership. Do not let
 many independent workers call `readNextBatch()` for the same provider id.
 
-The easiest way is to extend `AndroidOutboxSinkRunner`; it serializes drain
-calls for one provider cursor and ACKs only after `send()` returns true.
+The easiest way is to create an `AndroidOutboxSinkRunner` with a send lambda; it
+serializes drain calls for one provider cursor and ACKs only after the lambda
+returns true. Extend `AndroidOutboxSinkRunner` directly only when a sink needs
+to override doorbell filtering.
 
 The correct shape is one orchestrator or runner owning each provider cursor:
 
