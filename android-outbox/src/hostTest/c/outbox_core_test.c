@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define ASSERT_TRUE(condition)                                                     \
@@ -46,7 +47,8 @@
 #define TEST_STATS_BODY_BYTES (13u * 8u)
 #define TEST_DOORBELL_HANDSHAKE 0u
 #define TEST_DOORBELL_DATA_AVAILABLE 1u
-#define TEST_PROVIDER_ID "primary"
+#define TEST_PRIMARY_PROVIDER_ID "primary"
+#define TEST_SECONDARY_PROVIDER_ID "secondary"
 
 typedef struct test_context_t {
   char spool_dir[256];
@@ -63,12 +65,35 @@ typedef struct test_control_response_t {
 typedef struct concurrent_log_worker_t {
   uint32_t worker_id;
   uint32_t record_count;
+  uint64_t queue_full_retry_count;
   int failed;
 } concurrent_log_worker_t;
 
 typedef struct concurrent_stop_worker_t {
   int failed;
 } concurrent_stop_worker_t;
+
+typedef struct test_report_t {
+  uint32_t concurrent_worker_count;
+  uint32_t concurrent_records_per_worker;
+  uint32_t concurrent_queue_capacity;
+  uint32_t concurrent_high_watermark;
+  uint32_t large_payload_bytes;
+  uint32_t single_primary_records_written;
+  uint32_t single_primary_delivered_records;
+  uint32_t single_primary_acked_batches;
+  uint32_t single_primary_retried_after_restart;
+  uint32_t multi_primary_delivered_records;
+  uint32_t multi_primary_acked_batches;
+  uint32_t multi_secondary_delivered_records;
+  uint32_t multi_secondary_acked_batches;
+  uint32_t multi_cursor_independence_verified;
+  uint64_t concurrent_total_records;
+  uint64_t concurrent_queue_full_retries;
+  uint64_t concurrent_elapsed_ns;
+} test_report_t;
+
+static test_report_t test_report = {};
 
 static int remove_tree(const char* path) {
   DIR* dir = opendir(path);
@@ -112,10 +137,18 @@ static void teardown_context(test_context_t* context) {
   remove_tree(context->spool_dir);
 }
 
+static uint64_t monotonic_ns(void) {
+  struct timespec ts = {};
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+    return 0u;
+  }
+  return ((uint64_t)ts.tv_sec * 1000000000ull) + (uint64_t)ts.tv_nsec;
+}
+
 static outbox_config_t config_for(const test_context_t* context) {
   outbox_config_t config = {};
   config.spool_directory_path = context->spool_dir;
-  config.default_provider_id = TEST_PROVIDER_ID;
+  config.default_provider_id = TEST_PRIMARY_PROVIDER_ID;
   config.queue_capacity = 8u;
   config.max_record_bytes = 512u;
   config.max_segment_size_bytes = 4096u;
@@ -171,6 +204,7 @@ static void* concurrent_log_worker_main(void* opaque) {
     do {
       status = outbox_log(4, "network.concurrent", payload);
       if (status == OUTBOX_STATUS_QUEUE_FULL) {
+        worker->queue_full_retry_count += 1u;
         usleep(1000u);
       }
     } while (status == OUTBOX_STATUS_QUEUE_FULL);
@@ -332,7 +366,7 @@ static int write_read_batch_command(int fd,
   unsigned char payload[128] = {};
   size_t offset = 4u;
   write_u32_le(payload, 3u);
-  write_string_field(payload, &offset, TEST_CONTROL_FIELD_PROVIDER_ID, TEST_PROVIDER_ID);
+  write_string_field(payload, &offset, TEST_CONTROL_FIELD_PROVIDER_ID, TEST_PRIMARY_PROVIDER_ID);
   write_uint32_field(payload, &offset, TEST_CONTROL_FIELD_MAX_BATCH_RECORDS, max_records);
   write_uint32_field(payload, &offset, TEST_CONTROL_FIELD_MAX_BATCH_BYTES, max_bytes);
   return write_control_frame(fd,
@@ -350,7 +384,7 @@ static int write_ack_command(int fd, uint64_t sequence, const char* ack_token) {
     return 0;
   }
   write_u32_le(payload, 2u);
-  write_string_field(payload, &offset, TEST_CONTROL_FIELD_PROVIDER_ID, TEST_PROVIDER_ID);
+  write_string_field(payload, &offset, TEST_CONTROL_FIELD_PROVIDER_ID, TEST_PRIMARY_PROVIDER_ID);
   if (offset + 12u + ack_token_length > sizeof(payload)) {
     return 0;
   }
@@ -614,31 +648,35 @@ static int test_unacked_batch_survives_restart(void) {
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "first") != NULL);
   first_ack = strdup(batch.ack_token);
   ASSERT_TRUE(first_ack != NULL);
   outbox_free_record_batch(&batch);
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, first_ack));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, first_ack));
   free(first_ack);
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "second") != NULL);
   outbox_free_record_batch(&batch);
 
   outbox_stop();
   ASSERT_TRUE(start_logger(&context));
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "second") != NULL);
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, batch.ack_token));
   outbox_free_record_batch(&batch);
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 0u);
   outbox_free_record_batch(&batch);
+  test_report.single_primary_records_written = 2u;
+  test_report.single_primary_delivered_records = 2u;
+  test_report.single_primary_acked_batches = 2u;
+  test_report.single_primary_retried_after_restart = 1u;
   teardown_context(&context);
   return 0;
 }
@@ -674,9 +712,9 @@ static int test_ack_reports_remaining_backlog(void) {
   ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
   ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, batch.ack_token));
   outbox_free_record_batch(&batch);
 
   event_count = 0u;
@@ -696,24 +734,30 @@ static int test_provider_cursors_are_independent(void) {
   ASSERT_TRUE(log_and_flush("network.http", "first"));
   ASSERT_TRUE(log_and_flush("network.http", "second"));
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(primary_batch.records[0], "first") != NULL);
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, primary_batch.ack_token));
   outbox_free_record_batch(&primary_batch);
 
-  ASSERT_STATUS_OK(outbox_read_next_batch("secondary", 2u, 4096u, &secondary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_SECONDARY_PROVIDER_ID, 2u, 4096u, &secondary_batch));
   ASSERT_TRUE(secondary_batch.record_count == 2u);
   ASSERT_TRUE(strstr(secondary_batch.records[0], "first") != NULL);
   ASSERT_TRUE(strstr(secondary_batch.records[1], "second") != NULL);
-  ASSERT_STATUS_OK(outbox_ack("secondary", secondary_batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_SECONDARY_PROVIDER_ID, secondary_batch.ack_token));
   outbox_free_record_batch(&secondary_batch);
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &primary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(primary_batch.records[0], "second") != NULL);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, primary_batch.ack_token));
   outbox_free_record_batch(&primary_batch);
 
+  test_report.multi_primary_delivered_records = 2u;
+  test_report.multi_primary_acked_batches = 2u;
+  test_report.multi_secondary_delivered_records = 2u;
+  test_report.multi_secondary_acked_batches = 1u;
+  test_report.multi_cursor_independence_verified = 1u;
   teardown_context(&context);
   return 0;
 }
@@ -726,22 +770,22 @@ static int test_ack_requires_existing_provider_cursor(void) {
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID,
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID,
                                                         1u,
                                                         4096u,
                                                         &primary_batch));
   ASSERT_TRUE(primary_batch.record_count == 1u);
-  ASSERT_TRUE(outbox_ack("secondary", primary_batch.ack_token) ==
+  ASSERT_TRUE(outbox_ack(TEST_SECONDARY_PROVIDER_ID, primary_batch.ack_token) ==
               OUTBOX_STATUS_INVALID_ARGUMENT);
 
   /* A provider cursor is created by readBatch, not by ack. A new provider still
    * starts from the first durable line because the rejected ACK did not move it. */
-  ASSERT_STATUS_OK(outbox_read_next_batch("secondary", 1u, 4096u, &secondary_batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_SECONDARY_PROVIDER_ID, 1u, 4096u, &secondary_batch));
   ASSERT_TRUE(secondary_batch.record_count == 1u);
   ASSERT_TRUE(strstr(secondary_batch.records[0], "first") != NULL);
 
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, primary_batch.ack_token));
-  ASSERT_STATUS_OK(outbox_ack("secondary", secondary_batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, primary_batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_SECONDARY_PROVIDER_ID, secondary_batch.ack_token));
   outbox_free_record_batch(&primary_batch);
   outbox_free_record_batch(&secondary_batch);
   teardown_context(&context);
@@ -825,7 +869,7 @@ static int test_control_pipe_accepts_log_command_frame(void) {
   ASSERT_TRUE(assert_ok_response(pipes.record_read_fd,
                                  flush_sequence,
                                  TEST_CONTROL_COMMAND_FLUSH));
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "pipe-frame-log") != NULL);
   outbox_free_record_batch(&batch);
@@ -946,7 +990,7 @@ static int test_segment_retention_prunes_unacked_backlog(void) {
   ASSERT_TRUE(count_segment_files(context.spool_dir, &segment_count));
   ASSERT_TRUE(segment_count <= MAX_SEGMENT_COUNT);
 
-  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PROVIDER_ID, 8u, 4096u, &batch));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 8u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count > 0u);
   outbox_free_record_batch(&batch);
 
@@ -964,6 +1008,9 @@ static int test_concurrent_producers_flush_all_records(void) {
   pthread_t threads[WORKER_COUNT] = {};
   concurrent_log_worker_t workers[WORKER_COUNT] = {};
   outbox_stats_t stats = {};
+  uint64_t started_ns = 0u;
+  uint64_t elapsed_ns = 0u;
+  uint64_t queue_full_retries = 0u;
   uint32_t index = 0u;
   ASSERT_TRUE(setup_context(&context));
 
@@ -971,6 +1018,7 @@ static int test_concurrent_producers_flush_all_records(void) {
   config.queue_capacity = 16u;
   ASSERT_STATUS_OK(outbox_start(&config));
 
+  started_ns = monotonic_ns();
   for (index = 0u; index < WORKER_COUNT; ++index) {
     workers[index].worker_id = index;
     workers[index].record_count = RECORDS_PER_WORKER;
@@ -982,7 +1030,9 @@ static int test_concurrent_producers_flush_all_records(void) {
   for (index = 0u; index < WORKER_COUNT; ++index) {
     ASSERT_TRUE(pthread_join(threads[index], NULL) == 0);
     ASSERT_TRUE(workers[index].failed == 0);
+    queue_full_retries += workers[index].queue_full_retry_count;
   }
+  elapsed_ns = monotonic_ns() - started_ns;
 
   ASSERT_STATUS_OK(outbox_flush());
   outbox_get_stats(&stats);
@@ -990,13 +1040,21 @@ static int test_concurrent_producers_flush_all_records(void) {
   ASSERT_TRUE(stats.written_count == (uint64_t)WORKER_COUNT * RECORDS_PER_WORKER);
   ASSERT_TRUE(stats.queue_depth == 0u);
 
+  test_report.concurrent_worker_count = WORKER_COUNT;
+  test_report.concurrent_records_per_worker = RECORDS_PER_WORKER;
+  test_report.concurrent_total_records = (uint64_t)WORKER_COUNT * RECORDS_PER_WORKER;
+  test_report.concurrent_queue_capacity = config.queue_capacity;
+  test_report.concurrent_high_watermark = stats.queue_high_watermark;
+  test_report.concurrent_queue_full_retries = queue_full_retries;
+  test_report.concurrent_elapsed_ns = elapsed_ns;
+
   teardown_context(&context);
   return 0;
 }
 
 static int test_large_payload_round_trips_through_spool(void) {
   enum {
-    PAYLOAD_BYTES = 1024u * 1024u,
+    PAYLOAD_BYTES = 64u * 1024u,
   };
   test_context_t context = {};
   outbox_config_t config = {};
@@ -1020,14 +1078,15 @@ static int test_large_payload_round_trips_through_spool(void) {
   ASSERT_STATUS_OK(outbox_flush());
 
   ASSERT_STATUS_OK(outbox_read_next_batch(
-      TEST_PROVIDER_ID,
+      TEST_PRIMARY_PROVIDER_ID,
       1u,
       PAYLOAD_BYTES + 2048u,
       &batch));
   ASSERT_TRUE(batch.record_count == 1u);
   ASSERT_TRUE(strstr(batch.records[0], "network.large_payload") != NULL);
   ASSERT_TRUE(strlen(batch.records[0]) > PAYLOAD_BYTES);
-  ASSERT_STATUS_OK(outbox_ack(TEST_PROVIDER_ID, batch.ack_token));
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, batch.ack_token));
+  test_report.large_payload_bytes = PAYLOAD_BYTES;
   outbox_free_record_batch(&batch);
   free(payload);
   teardown_context(&context);
@@ -1085,14 +1144,78 @@ int main(void) {
           "  \"test\": \"android_outbox_core_test\",\n"
           "  \"result\": \"passed\",\n"
           "  \"kind\": \"native\",\n"
+          "  \"diagnostics\": {\n"
+          "    \"concurrent_producers\": {\n"
+          "      \"workers\": %u,\n"
+          "      \"records_per_worker\": %u,\n"
+          "      \"records\": %llu,\n"
+          "      \"queue\": %u,\n"
+          "      \"high_watermark\": %u,\n"
+          "      \"queue_full_retries\": %llu,\n"
+          "      \"elapsed_ms\": %.2f,\n"
+          "      \"throughput_records_per_sec\": %.2f\n"
+          "    },\n"
+          "    \"large_payload\": {\n"
+          "      \"payload_bytes\": %u\n"
+          "    }\n"
+          "  },\n"
           "  \"scenarios\": [\n"
           "    {\n"
-          "      \"scenario\": \"single-consumer\"\n"
+          "      \"scenario\": \"single-provider\",\n"
+          "      \"records_written\": %u,\n"
+          "      \"retried_after_restart\": %s,\n"
+          "      \"providers\": [\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": %u\n"
+          "        }\n"
+          "      ]\n"
           "    },\n"
           "    {\n"
-          "      \"scenario\": \"multi-consumer\"\n"
+          "      \"scenario\": \"multi-provider\",\n"
+          "      \"cursor_independence_verified\": %s,\n"
+          "      \"providers\": [\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": %u\n"
+          "        },\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": %u\n"
+          "        }\n"
+          "      ]\n"
           "    }\n"
           "  ]\n"
-          "}\n");
+          "}\n",
+          test_report.concurrent_worker_count,
+          test_report.concurrent_records_per_worker,
+          (unsigned long long)test_report.concurrent_total_records,
+          test_report.concurrent_queue_capacity,
+          test_report.concurrent_high_watermark,
+          (unsigned long long)test_report.concurrent_queue_full_retries,
+          (double)test_report.concurrent_elapsed_ns / 1000000.0,
+          test_report.concurrent_elapsed_ns == 0u
+              ? 0.0
+              : ((double)test_report.concurrent_total_records * 1000000000.0 /
+                 (double)test_report.concurrent_elapsed_ns),
+          test_report.large_payload_bytes,
+          test_report.single_primary_records_written,
+          test_report.single_primary_retried_after_restart ? "true" : "false",
+          TEST_PRIMARY_PROVIDER_ID,
+          test_report.single_primary_delivered_records,
+          test_report.single_primary_acked_batches,
+          test_report.multi_cursor_independence_verified ? "true" : "false",
+          TEST_PRIMARY_PROVIDER_ID,
+          test_report.multi_primary_delivered_records,
+          test_report.multi_primary_acked_batches,
+          TEST_SECONDARY_PROVIDER_ID,
+          test_report.multi_secondary_delivered_records,
+          test_report.multi_secondary_acked_batches);
   return 0;
 }

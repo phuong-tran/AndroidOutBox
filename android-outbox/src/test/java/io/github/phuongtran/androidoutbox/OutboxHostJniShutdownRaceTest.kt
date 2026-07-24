@@ -31,63 +31,108 @@ class OutboxHostJniShutdownRaceTest {
                 defaultProviderId = PRIMARY_PROVIDER_ID,
             )
 
-            val startGate = CountDownLatch(1)
-            val doneGate = CountDownLatch(SHUTDOWN_WORKER_COUNT)
-            val running = AtomicBoolean(true)
-            val failure = AtomicReference<Throwable?>()
-            val executor = Executors.newFixedThreadPool(SHUTDOWN_WORKER_COUNT)
+            val race = ShutdownRace(client)
 
-            repeat(SHUTDOWN_WORKER_COUNT) { workerIndex ->
-                executor.execute {
-                    runCatching {
-                        startGate.await()
-                        var recordIndex = 0
-                        while (running.get() && recordIndex < SHUTDOWN_MAX_WRITES_PER_WORKER) {
-                            client.write(
-                                level = OutboxRecordLevel.ERROR,
-                                category = "shutdown.race.$workerIndex",
-                                payload = """{"record":$recordIndex}""",
-                            )
-                            if (recordIndex % SHUTDOWN_FLUSH_INTERVAL == 0) {
-                                client.flush()
-                            }
-                            if (recordIndex % SHUTDOWN_READ_INTERVAL == 0) {
-                                val providerId = "shutdown-$workerIndex"
-                                val batch = client.readNextBatch(
-                                    providerId = providerId,
-                                    maxRecords = 2,
-                                    maxBytes = 4096,
-                                )
-                                if (batch != null) {
-                                    client.ack(
-                                        providerId = providerId,
-                                        ackToken = batch.ackToken,
-                                    )
-                                }
-                            }
-                            if (recordIndex % SHUTDOWN_STATS_INTERVAL == 0) {
-                                client.getStats()
-                            }
-                            recordIndex += 1
-                        }
-                    }.onFailure { throwable ->
-                        failure.compareAndSet(null, throwable)
-                    }
-                    doneGate.countDown()
-                }
-            }
-
-            startGate.countDown()
+            race.start()
             Thread.sleep(SHUTDOWN_RACE_WINDOW_MS)
             client.stopNativeOutbox()
             client.closeNativePipes()
             client.close()
-            running.set(false)
+            race.stop()
 
+            race.assertNoWorkerFailure()
+        }
+    }
+
+    private class ShutdownRace(
+        private val client: OutboxNativeControlClient,
+    ) {
+        private val startGate = CountDownLatch(1)
+        private val doneGate = CountDownLatch(SHUTDOWN_WORKER_COUNT)
+        private val running = AtomicBoolean(true)
+        private val failure = AtomicReference<Throwable?>()
+        private val executor = Executors.newFixedThreadPool(SHUTDOWN_WORKER_COUNT)
+
+        init {
+            repeat(SHUTDOWN_WORKER_COUNT) { workerIndex ->
+                executor.execute {
+                    runWorker(workerIndex)
+                }
+            }
+        }
+
+        fun start() {
+            startGate.countDown()
+        }
+
+        fun stop() {
+            running.set(false)
+        }
+
+        fun assertNoWorkerFailure() {
             assertTrue(doneGate.await(SHUTDOWN_WORKER_TIMEOUT_SECONDS, TimeUnit.SECONDS))
             executor.shutdownNow()
             failure.get()?.let { throwable ->
                 throw AssertionError("Concurrent shutdown should not throw", throwable)
+            }
+        }
+
+        private fun runWorker(workerIndex: Int) {
+            runCatching {
+                startGate.await()
+                runWorkerLoop(workerIndex)
+            }.onFailure { throwable ->
+                failure.compareAndSet(null, throwable)
+            }
+            doneGate.countDown()
+        }
+
+        private fun runWorkerLoop(workerIndex: Int) {
+            var recordIndex = 0
+            while (running.get() && recordIndex < SHUTDOWN_MAX_WRITES_PER_WORKER) {
+                client.write(
+                    level = OutboxRecordLevel.ERROR,
+                    category = "shutdown.race.$workerIndex",
+                    payload = """{"record":$recordIndex}""",
+                )
+                maybeFlush(recordIndex)
+                maybeReadAndAck(
+                    workerIndex = workerIndex,
+                    recordIndex = recordIndex,
+                )
+                maybeReadStats(recordIndex)
+                recordIndex += 1
+            }
+        }
+
+        private fun maybeFlush(recordIndex: Int) {
+            if (recordIndex % SHUTDOWN_FLUSH_INTERVAL == 0) {
+                client.flush()
+            }
+        }
+
+        private fun maybeReadAndAck(
+            workerIndex: Int,
+            recordIndex: Int,
+        ) {
+            if (recordIndex % SHUTDOWN_READ_INTERVAL != 0) {
+                return
+            }
+            val providerId = "shutdown-$workerIndex"
+            val batch = client.readNextBatch(
+                providerId = providerId,
+                maxRecords = 2,
+                maxBytes = 4096,
+            ) ?: return
+            client.ack(
+                providerId = providerId,
+                ackToken = batch.ackToken,
+            )
+        }
+
+        private fun maybeReadStats(recordIndex: Int) {
+            if (recordIndex % SHUTDOWN_STATS_INTERVAL == 0) {
+                client.getStats()
             }
         }
     }

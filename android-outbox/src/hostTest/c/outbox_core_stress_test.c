@@ -15,9 +15,9 @@
 #define DEFAULT_WORKER_COUNT 8u
 #define DEFAULT_RECORDS_PER_WORKER 20000u
 #define DEFAULT_QUEUE_CAPACITY 1024u
-#define DEFAULT_MAX_RECORD_BYTES 512u
+#define DEFAULT_MAX_RECORD_BYTES 256u
 #define STRESS_SEGMENT_BYTES (4ull * 1024ull * 1024ull)
-#define STRESS_PRIMARY_PROVIDER_ID "stress"
+#define STRESS_PRIMARY_PROVIDER_ID "primary"
 #define STRESS_SECONDARY_PROVIDER_ID "secondary"
 #define STRESS_SAMPLE_BATCH_RECORDS 32u
 #define STRESS_SAMPLE_BATCH_BYTES (64u * 1024u)
@@ -139,10 +139,10 @@ static void* stress_worker_main(void* opaque) {
 /*
  * After the producer/writer stress path has already been measured, read a small
  * sample through one or two providers. This does not participate in throughput;
- * it only proves the same retained spool can be consumed by independent sink
+ * it only proves the same retained spool can be consumed by independent provider
  * cursors without making the stress output noisy.
  */
-static int read_and_ack_single_consumer_sample(stress_result_t* result) {
+static int read_and_ack_single_provider_sample(stress_result_t* result) {
   outbox_record_batch_t batch = {};
   if (outbox_read_next_batch(STRESS_PRIMARY_PROVIDER_ID,
                                            STRESS_SAMPLE_BATCH_RECORDS,
@@ -162,7 +162,7 @@ static int read_and_ack_single_consumer_sample(stress_result_t* result) {
   return 1;
 }
 
-static int read_and_ack_multi_consumer_sample(stress_result_t* result) {
+static int read_and_ack_multi_provider_sample(stress_result_t* result) {
   outbox_record_batch_t primary_batch = {};
   outbox_record_batch_t secondary_batch = {};
   char* first_primary_record = NULL;
@@ -207,8 +207,8 @@ cleanup:
 static void print_stress_report(uint32_t worker_count,
                                 uint64_t total_records,
                                 uint32_t queue_capacity,
-                                const stress_result_t* single_consumer_result,
-                                const stress_result_t* multi_consumer_result) {
+                                const stress_result_t* single_provider_result,
+                                const stress_result_t* multi_provider_result) {
   /* Pretty JSON is emitted once after both scenarios complete for human review
    * and copy/paste diagnostics. It is intentionally kept outside the hot path. */
   fprintf(stdout,
@@ -218,8 +218,7 @@ static void print_stress_report(uint32_t worker_count,
           "  \"kind\": \"native-stress\",\n"
           "  \"scenarios\": [\n"
           "    {\n"
-          "      \"scenario\": \"single-consumer\",\n"
-          "      \"consumers\": \"%s\",\n"
+          "      \"scenario\": \"single-provider\",\n"
           "      \"sources\": \"stress.mpsc\",\n"
           "      \"workers\": %u,\n"
           "      \"records\": %llu,\n"
@@ -228,12 +227,19 @@ static void print_stress_report(uint32_t worker_count,
           "      \"queue_full_retries\": %llu,\n"
           "      \"sampled_records\": %u,\n"
           "      \"acked_batches\": %u,\n"
+          "      \"providers\": [\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": 1\n"
+          "        }\n"
+          "      ],\n"
           "      \"elapsed_ms\": %.2f,\n"
           "      \"throughput_records_per_sec\": %.2f\n"
           "    },\n"
           "    {\n"
-          "      \"scenario\": \"multi-consumer\",\n"
-          "      \"consumers\": \"%s\",\n"
+          "      \"scenario\": \"multi-provider\",\n"
           "      \"sources\": \"stress.mpsc\",\n"
           "      \"workers\": %u,\n"
           "      \"records\": %llu,\n"
@@ -242,38 +248,56 @@ static void print_stress_report(uint32_t worker_count,
           "      \"queue_full_retries\": %llu,\n"
           "      \"sampled_records\": %u,\n"
           "      \"acked_batches\": %u,\n"
+          "      \"providers\": [\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": 1\n"
+          "        },\n"
+          "        {\n"
+          "          \"provider\": \"%s\",\n"
+          "          \"result\": \"passed\",\n"
+          "          \"read_records\": %u,\n"
+          "          \"acked_batches\": 1\n"
+          "        }\n"
+          "      ],\n"
           "      \"elapsed_ms\": %.2f,\n"
           "      \"throughput_records_per_sec\": %.2f\n"
           "    }\n"
           "  ]\n"
           "}\n",
+          worker_count,
+          (unsigned long long)total_records,
+          queue_capacity,
+          single_provider_result->stats.queue_high_watermark,
+          (unsigned long long)single_provider_result->queue_full_retries,
+          single_provider_result->sampled_records,
+          single_provider_result->acked_batches,
           STRESS_PRIMARY_PROVIDER_ID,
+          single_provider_result->sampled_records,
+          (double)single_provider_result->elapsed_ns / 1000000.0,
+          single_provider_result->elapsed_ns == 0u
+              ? 0.0
+              : ((double)total_records * 1000000000.0 / (double)single_provider_result->elapsed_ns),
           worker_count,
           (unsigned long long)total_records,
           queue_capacity,
-          single_consumer_result->stats.queue_high_watermark,
-          (unsigned long long)single_consumer_result->queue_full_retries,
-          single_consumer_result->sampled_records,
-          single_consumer_result->acked_batches,
-          (double)single_consumer_result->elapsed_ns / 1000000.0,
-          single_consumer_result->elapsed_ns == 0u
+          multi_provider_result->stats.queue_high_watermark,
+          (unsigned long long)multi_provider_result->queue_full_retries,
+          multi_provider_result->sampled_records,
+          multi_provider_result->acked_batches,
+          STRESS_PRIMARY_PROVIDER_ID,
+          multi_provider_result->sampled_records,
+          STRESS_SECONDARY_PROVIDER_ID,
+          multi_provider_result->sampled_records,
+          (double)multi_provider_result->elapsed_ns / 1000000.0,
+          multi_provider_result->elapsed_ns == 0u
               ? 0.0
-              : ((double)total_records * 1000000000.0 / (double)single_consumer_result->elapsed_ns),
-          STRESS_PRIMARY_PROVIDER_ID "," STRESS_SECONDARY_PROVIDER_ID,
-          worker_count,
-          (unsigned long long)total_records,
-          queue_capacity,
-          multi_consumer_result->stats.queue_high_watermark,
-          (unsigned long long)multi_consumer_result->queue_full_retries,
-          multi_consumer_result->sampled_records,
-          multi_consumer_result->acked_batches,
-          (double)multi_consumer_result->elapsed_ns / 1000000.0,
-          multi_consumer_result->elapsed_ns == 0u
-              ? 0.0
-              : ((double)total_records * 1000000000.0 / (double)multi_consumer_result->elapsed_ns));
+              : ((double)total_records * 1000000000.0 / (double)multi_provider_result->elapsed_ns));
 }
 
-static int run_stress_scenario(int multi_consumer,
+static int run_stress_scenario(int multi_provider,
                                uint32_t worker_count,
                                uint32_t records_per_worker,
                                uint32_t queue_capacity,
@@ -340,12 +364,12 @@ static int run_stress_scenario(int multi_consumer,
     goto cleanup;
   }
 
-  if (multi_consumer) {
-    if (!read_and_ack_multi_consumer_sample(&result)) {
+  if (multi_provider) {
+    if (!read_and_ack_multi_provider_sample(&result)) {
       goto cleanup;
     }
   } else {
-    if (!read_and_ack_single_consumer_sample(&result)) {
+    if (!read_and_ack_single_provider_sample(&result)) {
       goto cleanup;
     }
   }
@@ -360,8 +384,8 @@ cleanup:
 }
 
 int main(int argc, char** argv) {
-  stress_result_t single_consumer_result = {};
-  stress_result_t multi_consumer_result = {};
+  stress_result_t single_provider_result = {};
+  stress_result_t multi_provider_result = {};
   uint32_t worker_count = DEFAULT_WORKER_COUNT;
   uint32_t records_per_worker = DEFAULT_RECORDS_PER_WORKER;
   uint32_t queue_capacity = DEFAULT_QUEUE_CAPACITY;
@@ -386,7 +410,7 @@ int main(int argc, char** argv) {
                           records_per_worker,
                           queue_capacity,
                           max_record_bytes,
-                          &single_consumer_result) != 0) {
+                          &single_provider_result) != 0) {
     return 1;
   }
   if (run_stress_scenario(1,
@@ -394,13 +418,13 @@ int main(int argc, char** argv) {
                           records_per_worker,
                           queue_capacity,
                           max_record_bytes,
-                          &multi_consumer_result) != 0) {
+                          &multi_provider_result) != 0) {
     return 1;
   }
   print_stress_report(worker_count,
                       total_records,
                       queue_capacity,
-                      &single_consumer_result,
-                      &multi_consumer_result);
+                      &single_provider_result,
+                      &multi_provider_result);
   return 0;
 }

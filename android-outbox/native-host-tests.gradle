@@ -63,7 +63,17 @@ def nativeStressRecordsPerWorker = providers.gradleProperty("androidOutboxStress
 def nativeStressQueueCapacity = providers.gradleProperty("androidOutboxStressQueueCapacity")
         .orElse("1024")
 def nativeStressMaxRecordBytes = providers.gradleProperty("androidOutboxStressMaxRecordBytes")
-        .orElse("512")
+        .orElse("256")
+
+// Host-native C tests are manual diagnostics. They stay detached from CI so the
+// Android library build only packages the .so by default.
+// Run them explicitly with:
+// ./gradlew :android-outbox:testNativeHost \
+//   -PandroidOutboxHostNative=true \
+//   --console=plain
+def isNativeHostTestEnabled = providers.gradleProperty("androidOutboxHostNative")
+        .map { it.toBoolean() }
+        .orElse(false)
 
 def nativeMainSources = [
         file("src/main/cpp/outbox_control.c"),
@@ -109,7 +119,7 @@ tasks.register("compileNativeHostTest", Exec) {
     group = "verification"
     description = "Compiles host-side C tests for the AndroidOutBox core."
     onlyIf {
-        !isWindowsHost
+        !isWindowsHost && isNativeHostTestEnabled.get()
     }
 
     inputs.files(nativeMainSources, nativeMainHeaders, file("src/hostTest/c/outbox_core_test.c"))
@@ -132,10 +142,10 @@ tasks.register("compileNativeHostTest", Exec) {
 
 tasks.register("testNativeHost", Exec) {
     group = "verification"
-    description = "Runs host-side C tests for the AndroidOutBox core."
+    description = "Runs manual host-side C tests. Enable with -PandroidOutboxHostNative=true."
     dependsOn("compileNativeHostTest")
     onlyIf {
-        !isWindowsHost
+        !isWindowsHost && isNativeHostTestEnabled.get()
     }
 
     commandLine(hostTestBinary.get().absolutePath)

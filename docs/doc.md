@@ -262,8 +262,8 @@ budget. This keeps disk use bounded and prevents telemetry from becoming more
 important than the application.
 
 Each provider has its own cursor. A provider is just a consumer id chosen by the
-app, such as `default`, `sentry`, `loki`, or `debug-upload`. Native does not
-know what those providers mean. It only tracks where each provider has
+app, such as `default`, `primary`, `secondary`, or `debug-upload`. Native does
+not know what those providers mean. It only tracks where each provider has
 successfully committed delivery progress.
 
 `readNextBatch()` is a peek operation. It reads from the provider cursor and
@@ -300,7 +300,7 @@ allowed to use before it starts rejecting or deleting records to protect the
 application.
 
 | Parameter | Default | Purpose | When the limit is reached |
-|---|---:|---|---|
+|---|---|---|---|
 | `spoolDirectoryPath` | Required | App-private directory for spool segments and provider cursors. | If the directory cannot be created or opened, `start()` fails and the outbox stays stopped. |
 | `defaultProviderId` | `default` | Cursor id used when a caller does not pass an explicit provider id. | It must match the provider id format. Invalid ids are rejected by `OutboxConfig`. |
 | `queueCapacity` | `256` | Maximum number of records that may wait in native memory before the writer persists them. | When the queue is full, new writes are rejected, `write()` returns `false`, and pressure stats are updated. |
@@ -733,6 +733,6 @@ if failure -> no ACK
 retry later with backoff owned by the app
 ```
 
-Multiple consumers can use different provider ids if the app wants separate
+Multiple providers can use different provider ids if the app wants separate
 read/ACK progress. Native still treats provider ids as opaque cursor names; it
 does not know which backend a provider represents.

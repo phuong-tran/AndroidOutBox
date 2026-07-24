@@ -1,5 +1,9 @@
 # AndroidOutBox
 
+[![CI](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml/badge.svg)](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.3.4-blue.svg)](#installation)
+
 AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
 
@@ -27,6 +31,15 @@ keeps ownership of meaning, privacy, retry policy, and network delivery.
 - report pressure and drop stats
 
 The app decides where, when, and how to sink the data.
+
+## Project Status
+
+AndroidOutBox is experimental but usable. The public API is intentionally
+small, and the runtime contract is documented and tested. Native/runtime
+internals may still evolve while the project matures.
+
+The project favors app safety over telemetry completeness. It is designed as a
+bounded outbox, not an unbounded audit log.
 
 ## Delivery Model
 
@@ -74,7 +87,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.3")
+implementation("io.github.phuongtran:android-outbox:1.3.4")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
@@ -135,6 +148,9 @@ operating system.
 Read [docs/doc.md](docs/doc.md) for the design rationale, intended use cases,
 doorbell/read/ACK model, and crash logging boundary.
 
+Release notes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
+guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Modules
 
 - `:android-outbox`: publishable Maven AAR module. This is the core.
@@ -171,7 +187,9 @@ Run the regular Kotlin/JVM unit tests:
 Run the host-native smoke test for the C core:
 
 ```bash
-./gradlew :android-outbox:testNativeHost --console=plain
+./gradlew :android-outbox:testNativeHost \
+  -PandroidOutboxHostNative=true \
+  --console=plain
 ```
 
 Run the opt-in host JNI integration test:
@@ -206,11 +224,32 @@ Native stress tests are opt-in so normal development and CI do not pay the cost
 unless explicitly requested:
 
 ```bash
-./gradlew :android-outbox:testNativeHostStress -PandroidOutboxStress=true --console=plain
+./gradlew :android-outbox:testNativeHostStress \
+  -PandroidOutboxStress=true \
+  --console=plain
 ```
 
 Use the stress task when you want a heavier confidence check for the native
 producer/writer path.
+
+Copy/paste these command lines when sharing manual review instructions:
+
+```bash
+./gradlew :android-outbox:testNativeHost \
+  -PandroidOutboxHostNative=true \
+  --console=plain
+
+./gradlew :android-outbox:testNativeHostStress \
+  -PandroidOutboxStress=true \
+  --console=plain
+```
+
+When you need clean JSON for copy/paste, filter from the first JSON line:
+
+```bash
+./gradlew -q :android-outbox:testNativeHost \
+  -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
+```
 
 ## Build
 
@@ -225,3 +264,7 @@ Build the sample app:
 ```bash
 ./gradlew :app:assembleDebug --console=plain
 ```
+
+## License
+
+AndroidOutBox is released under the MIT License. See [LICENSE](LICENSE).

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_native_diagnostics:
+        description: "Run host-native and host-JNI diagnostics"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      run_stress:
+        description: "Run native stress diagnostics"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      run_race:
+        description: "Run host-JNI shutdown race diagnostics"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android Library
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Unit tests
+        run: ./gradlew :android-outbox:testDebugUnitTest --console=plain
+
+      - name: Android lint
+        run: ./gradlew :android-outbox:lintRelease --console=plain
+
+      - name: Assemble release AAR
+        run: ./gradlew :android-outbox:assembleRelease --console=plain
+
+      - name: Verify host-native diagnostics stay opt-in
+        run: ./gradlew :android-outbox:compileNativeHostTest --console=plain
+
+  native-diagnostics:
+    name: Manual Native Diagnostics
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_native_diagnostics == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Host-native smoke
+        run: |
+          ./gradlew -q :android-outbox:testNativeHost \
+            -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
+
+      - name: Host-JNI integration
+        run: |
+          ./gradlew :android-outbox:testDebugUnitTest \
+            --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
+            -PandroidOutboxHostJni=true \
+            --console=plain
+
+      - name: Host-JNI shutdown race
+        if: github.event.inputs.run_race == 'true'
+        run: |
+          ./gradlew :android-outbox:testDebugUnitTest \
+            --tests "io.github.phuongtran.androidoutbox.OutboxHostJniShutdownRaceTest" \
+            -PandroidOutboxHostJniRace=true \
+            --console=plain
+
+      - name: Native stress
+        if: github.event.inputs.run_stress == 'true'
+        run: |
+          ./gradlew -q :android-outbox:testNativeHostStress \
+            -PandroidOutboxStress=true | sed -n '/^{/,$p'

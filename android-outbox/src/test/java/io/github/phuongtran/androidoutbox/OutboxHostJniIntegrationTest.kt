@@ -13,16 +13,16 @@ import org.junit.Test
  * Gradle builds a host-loadable shared library from the production C core plus
  * a tiny test JNI bridge. This test then talks to that library through real OS
  * pipes and the production [OutboxNativeControlClient]. The scenarios
- * cover both the current single-consumer shape and the multi-consumer cursor contract,
+ * cover both the current single-provider shape and the multi-provider cursor contract,
  * which lets us exercise the Kotlin/native wire protocol without coupling the
  * feedback loop to Android instrumentation.
  */
 class OutboxHostJniIntegrationTest {
 
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun `host jni shared library should verify consumer scenarios through native pipes`() {
-        val singleConsumerResult = runSingleConsumerScenario()
-        val multiConsumerResult = runMultiConsumerScenario()
+    fun `host jni shared library should verify provider scenarios through native pipes`() {
+        val singleProviderResult = runSingleProviderScenario()
+        val multiProviderResult = runMultiProviderScenario()
 
         // Emit a compact diagnostic summary only after the native path has
         // completed, so output formatting cannot affect the behavior under
@@ -35,18 +35,18 @@ class OutboxHostJniIntegrationTest {
                   "kind": "jni",
                   "scenarios": [
                     {
-                      "scenario": "${singleConsumerResult.scenario}",
-                      "consumers": "${singleConsumerResult.consumers}",
-                      "sources": "${singleConsumerResult.sources}",
-                      "records": ${singleConsumerResult.records},
-                      "acked_batches": ${singleConsumerResult.ackedBatches}
+                      "scenario": "${singleProviderResult.scenario}",
+                      "providers": "${singleProviderResult.providers}",
+                      "sources": "${singleProviderResult.sources}",
+                      "records": ${singleProviderResult.records},
+                      "acked_batches": ${singleProviderResult.ackedBatches}
                     },
                     {
-                      "scenario": "${multiConsumerResult.scenario}",
-                      "consumers": "${multiConsumerResult.consumers}",
-                      "sources": "${multiConsumerResult.sources}",
-                      "records": ${multiConsumerResult.records},
-                      "acked_batches": ${multiConsumerResult.ackedBatches}
+                      "scenario": "${multiProviderResult.scenario}",
+                      "providers": "${multiProviderResult.providers}",
+                      "sources": "${multiProviderResult.sources}",
+                      "records": ${multiProviderResult.records},
+                      "acked_batches": ${multiProviderResult.ackedBatches}
                     }
                   ]
                 }
@@ -54,7 +54,7 @@ class OutboxHostJniIntegrationTest {
         )
     }
 
-    private fun runSingleConsumerScenario(): HostJniScenarioResult {
+    private fun runSingleProviderScenario(): HostJniScenarioResult {
         return withHostClient { client, spoolDirectory ->
             configureHostOutbox(
                 client = client,
@@ -92,8 +92,8 @@ class OutboxHostJniIntegrationTest {
             assertEquals(1L, stats.acceptedCount)
             assertEquals(1L, stats.writtenCount)
             HostJniScenarioResult(
-                scenario = SINGLE_SINK_SCENARIO,
-                consumers = PRIMARY_PROVIDER_ID,
+                scenario = SINGLE_PROVIDER_SCENARIO,
+                providers = PRIMARY_PROVIDER_ID,
                 sources = "host.jvm",
                 records = batch.records.size,
                 ackedBatches = 1,
@@ -101,7 +101,7 @@ class OutboxHostJniIntegrationTest {
         }
     }
 
-    private fun runMultiConsumerScenario(): HostJniScenarioResult {
+    private fun runMultiProviderScenario(): HostJniScenarioResult {
         return withHostClient { client, spoolDirectory ->
             configureHostOutbox(
                 client = client,
@@ -173,12 +173,12 @@ class OutboxHostJniIntegrationTest {
                 ackToken = primarySecondBatch.ackToken,
             )
             assertTrue(primarySecondAcked)
-            // The multi-consumer scenario proves provider cursors are independent:
-            // one consumer can ack the first record while another still reads
+            // The multi-provider scenario proves provider cursors are independent:
+            // primary can ack the first record while secondary still reads
             // the same shared spool from the beginning.
             HostJniScenarioResult(
-                scenario = MULTI_SINK_SCENARIO,
-                consumers = "$PRIMARY_PROVIDER_ID,$SECONDARY_PROVIDER_ID",
+                scenario = MULTI_PROVIDER_SCENARIO,
+                providers = "$PRIMARY_PROVIDER_ID,$SECONDARY_PROVIDER_ID",
                 sources = "host.jvm.first,host.jvm.second",
                 records = secondaryBatch.records.size,
                 ackedBatches = 3,
@@ -188,7 +188,7 @@ class OutboxHostJniIntegrationTest {
 
     private data class HostJniScenarioResult(
         val scenario: String,
-        val consumers: String,
+        val providers: String,
         val sources: String,
         val records: Int,
         val ackedBatches: Int,
@@ -196,8 +196,8 @@ class OutboxHostJniIntegrationTest {
 
     private companion object {
         const val TEST_TIMEOUT_MS = 10_000L
-        const val SINGLE_SINK_SCENARIO = "single-consumer"
-        const val MULTI_SINK_SCENARIO = "multi-consumer"
+        const val SINGLE_PROVIDER_SCENARIO = "single-provider"
+        const val MULTI_PROVIDER_SCENARIO = "multi-provider"
         const val PRIMARY_PROVIDER_ID = "primary"
         const val SECONDARY_PROVIDER_ID = "secondary"
     }
