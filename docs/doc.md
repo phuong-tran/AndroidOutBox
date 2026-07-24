@@ -14,6 +14,7 @@
 - [Storage Directory](#storage-directory)
 - [Process Ownership](#process-ownership)
 - [Network Sinks](#network-sinks)
+- [Sink Orchestration](#sink-orchestration)
 - [Can It Log Crashes?](#can-it-log-crashes)
 - [Crash Logging Pattern](#crash-logging-pattern)
 - [Payload Guidance](#payload-guidance)
@@ -389,7 +390,8 @@ SinkTransporter sends records
 ACK happens only after that sink succeeds
 ```
 
-One app can keep the sink layer boring and explicit:
+One app can keep the sink layer boring and explicit. Define a small sink
+interface for the transport policy:
 
 ```kotlin
 interface OutboxSink {
@@ -423,104 +425,52 @@ class LokiOutboxSink(
 }
 ```
 
-The drain runner can then use the sink provider id as the cursor id:
+For production code, prefer adapting that sink through `AndroidOutboxSinkRunner`
+instead of letting multiple call sites read and ACK batches directly:
 
 ```kotlin
-suspend fun drainSink(
+class ProviderOutboxRunner(
     outbox: AndroidOutbox,
-    sink: OutboxSink,
+    private val sink: OutboxSink,
+) : AndroidOutboxSinkRunner(
+    outbox = outbox,
+    providerId = sink.providerId,
 ) {
-    val batch = outbox.readNextBatch(
-        providerId = sink.providerId,
-        maxRecords = 32,
-        maxBytes = 64 * 1024,
-    ) ?: return
-
-    val delivered = sink.send(batch.records)
-    if (delivered) {
-        outbox.ack(
-            providerId = sink.providerId,
-            ackToken = batch.ackToken,
-        )
+    override suspend fun send(records: List<String>): Boolean {
+        return sink.send(records)
     }
 }
 ```
 
 In a real app, the drain runner should usually be driven by a coroutine-facing
-doorbell `Flow`. Keep the blocking native read inside a channel implementation,
-then let the runner collect events:
+doorbell `Flow`. AndroidOutBox ships a default blocking channel, so apps do not
+need to copy fd or native-read details:
 
 ```kotlin
-class BlockingOutboxDoorbellChannel(
-    outbox: AndroidOutbox,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-) : OutboxDoorbellChannel {
+val doorbells = BlockingOutboxDoorbellChannel(outbox)
+```
 
-    override fun events(): Flow<OutboxDoorbellEvent> {
-        return flow {
-            while (currentCoroutineContext().isActive) {
-                val event = outbox.readNextDoorbell() ?: break
-                emit(event)
-            }
-        }.flowOn(dispatcher)
-    }
+The runner owns the read/send/ACK sequence for one provider cursor:
+
+```kotlin
+val sink = SentryOutboxSink(
+    endpoint = sentryEndpoint,
+    httpClient = httpClient,
+)
+val runner = ProviderOutboxRunner(
+    outbox = outbox,
+    sink = sink,
+)
+
+scope.launch {
+    runner.run(doorbells)
 }
 ```
 
-The sink runner can then stay boring and Kotlin-first:
-
-```kotlin
-fun CoroutineScope.launchDoorbellDrain(
-    outbox: AndroidOutbox,
-    doorbells: OutboxDoorbellChannel,
-    sink: OutboxSink,
-) = launch {
-    drainAvailableBatches(
-        outbox = outbox,
-        sink = sink,
-    )
-
-    doorbells
-        .events()
-        .filter { event -> event == OutboxDoorbellEvent.DATA_AVAILABLE }
-        .collect {
-            drainAvailableBatches(
-                outbox = outbox,
-                sink = sink,
-            )
-        }
-}
-
-suspend fun drainAvailableBatches(
-    outbox: AndroidOutbox,
-    sink: OutboxSink,
-) {
-    while (true) {
-        val batch = outbox.readNextBatch(
-            providerId = sink.providerId,
-            maxRecords = 32,
-            maxBytes = 64 * 1024,
-        ) ?: break
-
-        val posted = sink.send(batch.records)
-        if (!posted) {
-            // No ACK: native keeps this provider cursor unchanged.
-            // The same batch can be fetched again by a later retry.
-            break
-        }
-
-        outbox.ack(
-            providerId = sink.providerId,
-            ackToken = batch.ackToken,
-        )
-    }
-}
-```
-
-The important chain is:
+The important chain inside the runner is:
 
 ```text
-initial drain -> doorbell -> fetchNextBatch -> post to network sink -> ack()
+initial drain -> doorbell -> readNextBatch -> post to network sink -> ack()
 ```
 
 If `post` fails, stop the drain loop for that sink and do not ACK. Retry policy
@@ -541,6 +491,67 @@ allowed to advance.
 For simple apps, use one provider id and one sink. For apps that need multiple
 backends, prefer separate provider ids so one failing backend does not block the
 cursor of another backend.
+
+## Sink Orchestration
+
+AndroidOutBox expects the application to centralize drain ownership. Do not let
+many independent workers call `readNextBatch()` for the same provider id.
+
+The easiest way is to extend `AndroidOutboxSinkRunner`; it serializes drain
+calls for one provider cursor and ACKs only after `send()` returns true.
+
+The correct shape is one orchestrator or runner owning each provider cursor:
+
+```text
+many app writers
+-> AndroidOutBox.write(...)
+-> native/file outbox
+-> doorbell hint
+-> one provider drain owner
+-> readNextBatch()
+-> post to sink
+-> ack() only after success
+```
+
+The write side may have many producers. Different threads, dispatchers, screens,
+or use cases can write records concurrently. That is a producer-side concern.
+The drain side is different: a provider cursor is ordered state, so reads and
+ACKs for that provider should be serialized by one owner.
+
+A doorbell is not a durable queue of work items. It is only a wake-up hint that
+records may be available. Multiple doorbells may arrive while a drain is already
+posting a batch to the network. That should not create multiple drain jobs for
+the same provider. The durable source of truth is still the native/file outbox,
+and the cursor only advances after ACK.
+
+Prefer this model:
+
+```text
+doorbell received while idle -> start drain
+doorbell received while draining -> mark dirty or ignore
+drain reads batch -> sink sends batch -> ACK on success
+sink fails -> stop draining and do not ACK
+later trigger -> retry from the same provider cursor
+```
+
+Avoid this model:
+
+```text
+doorbell 1 -> launch drain job A
+doorbell 2 -> launch drain job B for the same provider
+doorbell 3 -> launch drain job C for the same provider
+```
+
+Concurrent drains for the same provider can produce duplicate sends, unordered
+ACKs, cursor races, or retry behavior that is hard to reason about. If the app
+needs more throughput, increase batch size, tune `maxBytes`, use separate
+provider ids for truly independent sinks, or optimize the sink transport. Do not
+parallelize reads from the same provider cursor.
+
+The app may still use coroutines, `Flow`, a channel, WorkManager, connectivity
+callbacks, or app-start hooks to trigger the orchestrator. Those mechanisms are
+just triggers. The invariant remains the same: one active drain path per
+provider cursor.
 
 ## Can It Log Crashes?
 

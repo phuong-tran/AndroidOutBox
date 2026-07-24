@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml/badge.svg)](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.4-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-1.3.5-blue.svg)](#installation)
 
 AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
@@ -87,7 +87,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.4")
+implementation("io.github.phuongtran:android-outbox:1.3.5")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
@@ -127,6 +127,34 @@ if (batch != null) {
 }
 ```
 
+For production sinks, centralize read/send/ACK ownership by extending
+`AndroidOutboxSinkRunner`:
+
+```kotlin
+class MyOutboxRunner(
+    outbox: AndroidOutbox,
+    private val transport: MyTransport,
+) : AndroidOutboxSinkRunner(
+    outbox = outbox,
+    providerId = "primary",
+) {
+    override suspend fun send(records: List<String>): Boolean {
+        return transport.post(records)
+    }
+}
+
+val runner = MyOutboxRunner(outbox, transport)
+val doorbells = BlockingOutboxDoorbellChannel(outbox)
+
+scope.launch {
+    runner.run(doorbells)
+}
+```
+
+Do not run multiple batch readers for the same provider id. The runner keeps
+one ordered drain path so `readNextBatch -> send -> ack` preserves cursor
+semantics.
+
 Use `noBackupFilesDir` or `filesDir` when pending records should survive normal
 cache cleanup. Use `cacheDir` only when records may be discarded by the
 operating system.
@@ -146,7 +174,7 @@ operating system.
 ## Documentation
 
 Read [docs/doc.md](docs/doc.md) for the design rationale, intended use cases,
-doorbell/read/ACK model, and crash logging boundary.
+doorbell/read/ACK model, sink orchestration rules, and crash logging boundary.
 
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
 guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).

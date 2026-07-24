@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.phuongtran.androidoutbox.AndroidOutbox
 import io.github.phuongtran.androidoutbox.AndroidOutboxFactory
+import io.github.phuongtran.androidoutbox.BlockingOutboxDoorbellChannel
 import io.github.phuongtran.androidoutbox.OutboxConfig
 import io.github.phuongtran.androidoutbox.OutboxDoorbellEvent
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +26,7 @@ class OutboxLabViewModel(
 ) : AndroidViewModel(application) {
 
     private val outbox: AndroidOutbox = AndroidOutboxFactory.create()
-    private val doorbells = OutboxLabDoorbellChannel(outbox)
+    private val doorbells = BlockingOutboxDoorbellChannel(outbox)
     private var doorbellJob: Job? = null
 
     private val _uiState = MutableStateFlow(OutboxLabUiState())
