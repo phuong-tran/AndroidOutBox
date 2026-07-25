@@ -162,6 +162,8 @@ class AndroidOutboxSinkRunnerTest {
 
         override fun flush(): Boolean = true
 
+        override fun forceSync(): Boolean = true
+
         override fun stop() = Unit
 
         override fun getStats(): OutboxStats = OutboxStats()

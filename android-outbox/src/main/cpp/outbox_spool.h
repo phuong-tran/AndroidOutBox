@@ -12,6 +12,7 @@ extern "C" {
 
 uint64_t outbox_spool_file_size_bytes(const char* path);
 int outbox_spool_ensure_directory(const char* path);
+int outbox_spool_fsync_fd(int fd);
 size_t outbox_spool_line_buffer_capacity(uint32_t max_record_bytes);
 char* outbox_spool_segment_path(const char* directory, uint64_t segment_id);
 char* outbox_spool_cursor_directory_path(const char* directory);

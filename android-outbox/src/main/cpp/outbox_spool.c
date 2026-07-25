@@ -21,6 +21,70 @@ uint64_t outbox_spool_file_size_bytes(const char* path) {
   return stat_buffer.st_size < 0 ? 0u : (uint64_t)stat_buffer.st_size;
 }
 
+int outbox_spool_fsync_fd(int fd) {
+  int rc = 0;
+  if (fd < 0) {
+    return 0;
+  }
+  do {
+    rc = fsync(fd);
+  } while (rc != 0 && errno == EINTR);
+  return rc == 0 ? 1 : 0;
+}
+
+static char* parent_directory_path(const char* path) {
+  const char* slash = NULL;
+  size_t length = 0u;
+  char* parent = NULL;
+  if (path == NULL || path[0] == '\0') {
+    return NULL;
+  }
+  slash = strrchr(path, '/');
+  if (slash == NULL) {
+    return strdup(".");
+  }
+  if (slash == path) {
+    return strdup("/");
+  }
+  length = (size_t)(slash - path);
+  parent = (char*)calloc(1u, length + 1u);
+  if (parent == NULL) {
+    return NULL;
+  }
+  memcpy(parent, path, length);
+  return parent;
+}
+
+static int sync_directory_path(const char* directory_path) {
+  int fd = -1;
+  int ok = 0;
+  if (directory_path == NULL || directory_path[0] == '\0') {
+    return 0;
+  }
+#if defined(O_DIRECTORY)
+  fd = open(directory_path, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+#else
+  fd = open(directory_path, O_RDONLY | O_CLOEXEC);
+#endif
+  if (fd < 0) {
+    return 0;
+  }
+  ok = outbox_spool_fsync_fd(fd);
+  close(fd);
+  return ok;
+}
+
+static int sync_parent_directory_path(const char* path) {
+  char* parent = parent_directory_path(path);
+  int ok = 0;
+  if (parent == NULL) {
+    return 0;
+  }
+  ok = sync_directory_path(parent);
+  free(parent);
+  return ok;
+}
+
 int outbox_spool_ensure_directory(const char* path) {
   struct stat stat_buffer;
   if (path == NULL || path[0] == '\0') {
@@ -32,7 +96,7 @@ int outbox_spool_ensure_directory(const char* path) {
   if (errno != ENOENT) {
     return 0;
   }
-  return mkdir(path, 0700) == 0 ? 1 : 0;
+  return mkdir(path, 0700) == 0 && sync_parent_directory_path(path) ? 1 : 0;
 }
 
 static char* path_join(const char* directory, const char* file_name) {
@@ -204,9 +268,10 @@ static int persist_cursor_locked(const outbox_provider_cursor_t* cursor) {
   if (fd >= 0 &&
       outbox_write_all_bytes(fd, token, strlen(token)) &&
       outbox_write_all_bytes(fd, "\n", 1u) &&
-      fsync(fd) == 0 &&
+      outbox_spool_fsync_fd(fd) &&
       close(fd) == 0 &&
-      rename(temporary_path, cursor->cursor_file_path) == 0) {
+      rename(temporary_path, cursor->cursor_file_path) == 0 &&
+      sync_parent_directory_path(cursor->cursor_file_path)) {
     ok = 1;
   } else if (fd >= 0) {
     close(fd);
@@ -318,10 +383,28 @@ outbox_provider_cursor_t* outbox_spool_get_provider_cursor_locked(
 }
 
 int outbox_spool_open_segment_append_fd(const char* file_path) {
+  struct stat stat_buffer;
+  int file_exists = 0;
+  int fd = -1;
   if (file_path == NULL || file_path[0] == '\0') {
     return -1;
   }
-  return open(file_path, O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC, 0600);
+  if (stat(file_path, &stat_buffer) == 0) {
+    file_exists = 1;
+  } else if (errno != ENOENT) {
+    return -1;
+  }
+  fd = open(file_path, O_CREAT | O_WRONLY | O_APPEND | O_CLOEXEC, 0600);
+  if (fd < 0) {
+    return -1;
+  }
+  if (file_exists == 0 && !sync_parent_directory_path(file_path)) {
+    const int saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    return -1;
+  }
+  return fd;
 }
 
 int outbox_spool_scan_segment_bounds(

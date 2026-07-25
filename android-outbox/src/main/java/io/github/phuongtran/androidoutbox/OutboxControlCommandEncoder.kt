@@ -34,6 +34,7 @@ internal object OutboxControlCommandEncoder {
     const val COMMAND_WRITE = 6
     const val COMMAND_GET_STATS = 7
     const val COMMAND_CLOSE_PIPES = 8
+    const val COMMAND_FORCE_SYNC = 9
     private const val FIELD_HEADER_BYTES = 12
     private const val FIELD_SPOOL_DIRECTORY_PATH = 1
     private const val FIELD_QUEUE_CAPACITY = 2
@@ -96,6 +97,14 @@ internal object OutboxControlCommandEncoder {
     fun flush(sequence: Long): ByteBuffer {
         return frame(
             command = COMMAND_FLUSH,
+            sequence = sequence,
+            payload = ByteArray(0),
+        )
+    }
+
+    fun forceSync(sequence: Long): ByteBuffer {
+        return frame(
+            command = COMMAND_FORCE_SYNC,
             sequence = sequence,
             payload = ByteArray(0),
         )

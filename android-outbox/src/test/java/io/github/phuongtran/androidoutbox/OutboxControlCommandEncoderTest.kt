@@ -51,6 +51,19 @@ class OutboxControlCommandEncoderTest {
     }
 
     @Test
+    fun `encodes force sync command without payload`() {
+        val frame = OutboxControlCommandEncoder.forceSync(sequence = 10L)
+        val buffer = frame.readBuffer()
+
+        assertCommandHeader(
+            buffer = buffer,
+            command = 9,
+            payloadLength = 0,
+            sequence = 10L,
+        )
+    }
+
+    @Test
     fun `encodes read batch as command frame`() {
         val frame = OutboxControlCommandEncoder.readBatch(
             sequence = 11L,

@@ -106,7 +106,7 @@ val LAB_WRITERS = listOf(
         level = OutboxRecordLevel.INFO,
     ) { category, sequence, burstIndex ->
         """
-            {"message":"AndroidOutBox lab record","category":"$category","sequence":$sequence,"burst_index":$burstIndex,"timestamp_ms":${System.currentTimeMillis()},"source":"sample_app","delivery":"manual"}
+            {"message":"AndroidOutBox lab record","category":"$category","sequence":$sequence,"burst_index":$burstIndex,"timestamp_ms":$sequence,"source":"sample_app","delivery":"manual"}
         """.trimIndent()
     },
 )

@@ -31,6 +31,7 @@
 #define TEST_CONTROL_COMMAND_WRITE 6u
 #define TEST_CONTROL_COMMAND_GET_STATS 7u
 #define TEST_CONTROL_COMMAND_CLOSE_PIPES 8u
+#define TEST_CONTROL_COMMAND_FORCE_SYNC 9u
 #define TEST_CONTROL_FIELD_MAX_BATCH_RECORDS 6u
 #define TEST_CONTROL_FIELD_MAX_BATCH_BYTES 7u
 #define TEST_CONTROL_FIELD_ACK_TOKEN 8u
@@ -879,6 +880,35 @@ static int test_control_pipe_accepts_log_command_frame(void) {
   return 0;
 }
 
+static int test_control_pipe_force_syncs_active_segment(void) {
+  test_context_t context = {};
+  outbox_pipes_t pipes = {};
+  uint32_t events[8] = {};
+  size_t event_count = 0u;
+  const uint64_t sequence = 24u;
+  const uint64_t force_sync_sequence = 25u;
+  ASSERT_TRUE(setup_context(&context));
+  ASSERT_TRUE(start_logger(&context));
+  ASSERT_STATUS_OK(outbox_open_pipes(&pipes));
+  ASSERT_TRUE(drain_doorbells(pipes.doorbell_read_fd, events, 8u, &event_count));
+
+  ASSERT_TRUE(write_log_command(pipes.command_write_fd,
+                                sequence,
+                                4,
+                                "storage.sync",
+                                "force-sync-command"));
+  ASSERT_TRUE(write_simple_command(pipes.command_write_fd,
+                                   TEST_CONTROL_COMMAND_FORCE_SYNC,
+                                   force_sync_sequence));
+  ASSERT_TRUE(assert_ok_response(pipes.record_read_fd,
+                                 force_sync_sequence,
+                                 TEST_CONTROL_COMMAND_FORCE_SYNC));
+
+  ASSERT_TRUE(close_pipes_with_command(&pipes, 26u));
+  teardown_context(&context);
+  return 0;
+}
+
 static int test_control_pipe_reads_and_acks_batch_frames(void) {
   test_context_t context = {};
   outbox_pipes_t pipes = {};
@@ -1133,6 +1163,7 @@ int main(void) {
   ASSERT_TRUE(test_ack_requires_existing_provider_cursor() == 0);
   ASSERT_TRUE(test_data_available_doorbell_is_coalesced_until_batch_read() == 0);
   ASSERT_TRUE(test_control_pipe_accepts_log_command_frame() == 0);
+  ASSERT_TRUE(test_control_pipe_force_syncs_active_segment() == 0);
   ASSERT_TRUE(test_control_pipe_reads_and_acks_batch_frames() == 0);
   ASSERT_TRUE(test_control_pipe_returns_stats_response() == 0);
   ASSERT_TRUE(test_segment_retention_prunes_unacked_backlog() == 0);

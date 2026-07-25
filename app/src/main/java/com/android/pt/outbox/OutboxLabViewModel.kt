@@ -99,7 +99,7 @@ class OutboxLabViewModel(
         val state = _uiState.value
         runAction(
             name = "Burst $count",
-            nextStep = "Burst queued. Flush if you want to force persistence, then wait for the doorbell auto-read.",
+            nextStep = "Burst queued. Flush drains the writer queue; Force sync is the optional storage barrier.",
         ) {
             var accepted = 0
             repeat(count) { index ->
@@ -126,9 +126,21 @@ class OutboxLabViewModel(
         }
         runAction(
             name = "Flush",
-            nextStep = "Flush requested. Doorbell-driven drain will load a batch when native reports data.",
+            nextStep = "Flush drained accepted records to the active spool segment.",
         ) {
             "flush ok=${outbox.flush()}"
+        }
+    }
+
+    fun forceSync() {
+        if (!requireStarted("Force sync")) {
+            return
+        }
+        runAction(
+            name = "Force sync",
+            nextStep = "Force sync requested an OS-level sync for the active segment.",
+        ) {
+            "forceSync ok=${outbox.forceSync()}"
         }
     }
 

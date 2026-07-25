@@ -76,6 +76,18 @@ internal class OutboxNativeControlClient(
     }
 
     /**
+     * Waits for accepted records to reach the spool, then requests an OS-level
+     * sync for the active segment file.
+     */
+    fun forceSync(): Boolean {
+        return sendCommandAndReadOk(
+            command = OutboxControlCommandEncoder.COMMAND_FORCE_SYNC,
+        ) { sequence ->
+            OutboxControlCommandEncoder.forceSync(sequence)
+        }
+    }
+
+    /**
      * Stops the native writer thread but keeps the control pipes available long
      * enough for Kotlin to close them in an ordered shutdown.
      */

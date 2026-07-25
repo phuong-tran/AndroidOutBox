@@ -13,6 +13,8 @@ object NoOpAndroidOutbox : AndroidOutbox {
 
     override fun flush(): Boolean = false
 
+    override fun forceSync(): Boolean = false
+
     override fun stop() = Unit
 
     override fun getStats(): OutboxStats = OutboxStats()

@@ -26,10 +26,15 @@ interface AndroidOutbox : OutboxDoorbellReader, OutboxRecordStore {
     /**
      * Waits until records already accepted by the native writer have been
      * drained from the in-memory queue and written to the active segment file.
-     *
-     * This is a local writer barrier, not a database-grade durability promise.
      */
     fun flush(): Boolean
+
+    /**
+     * Flushes accepted records, then requests the OS to sync the active segment
+     * file to stable storage. This is optional and intentionally separate from
+     * [flush].
+     */
+    fun forceSync(): Boolean
 
     fun stop()
 

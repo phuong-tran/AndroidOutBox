@@ -105,7 +105,11 @@ outbox_status_t outbox_log(
     int32_t level,
     const char* category,
     const char* payload);
+/* Waits for accepted records to reach the spool writer. */
 outbox_status_t outbox_flush(void);
+/* Flushes accepted records, then fsyncs the active segment as the explicit
+ * stable-storage barrier. */
+outbox_status_t outbox_force_sync(void);
 void outbox_stop(void);
 void outbox_get_stats(outbox_stats_t* out_stats);
 outbox_status_t outbox_read_next_batch(

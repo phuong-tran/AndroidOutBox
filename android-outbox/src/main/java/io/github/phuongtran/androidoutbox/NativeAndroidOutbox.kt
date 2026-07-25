@@ -42,6 +42,12 @@ object NativeAndroidOutbox : AndroidOutbox {
         }
     }
 
+    override fun forceSync(): Boolean {
+        return withStartedClient(default = false) { client ->
+            client.forceSync()
+        }
+    }
+
     override fun stop() {
         val client = synchronized(lifecycleLock) {
             when (val state = runtimeState) {

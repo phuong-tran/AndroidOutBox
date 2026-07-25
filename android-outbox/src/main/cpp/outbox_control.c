@@ -24,6 +24,7 @@
 #define OUTBOX_CONTROL_COMMAND_WRITE 6u
 #define OUTBOX_CONTROL_COMMAND_GET_STATS 7u
 #define OUTBOX_CONTROL_COMMAND_CLOSE_PIPES 8u
+#define OUTBOX_CONTROL_COMMAND_FORCE_SYNC 9u
 #define OUTBOX_CONTROL_RESPONSE_HEADER_BYTES 16u
 #define OUTBOX_CONTROL_FIELD_SPOOL_DIRECTORY_PATH 1u
 #define OUTBOX_CONTROL_FIELD_QUEUE_CAPACITY 2u
@@ -618,6 +619,9 @@ static outbox_status_t handle_control_command(
       break;
     case OUTBOX_CONTROL_COMMAND_FLUSH:
       status = outbox_flush();
+      break;
+    case OUTBOX_CONTROL_COMMAND_FORCE_SYNC:
+      status = outbox_force_sync();
       break;
     case OUTBOX_CONTROL_COMMAND_STOP:
       outbox_stop();

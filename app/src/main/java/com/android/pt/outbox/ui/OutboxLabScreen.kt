@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.android.pt.outbox.LAB_CATEGORIES
 import com.android.pt.outbox.LAB_MAX_BATCH_RECORDS
@@ -72,6 +73,7 @@ fun OutboxLabScreen(
     onWriteOne: () -> Unit,
     onBurst: (Int) -> Unit,
     onFlush: () -> Unit,
+    onForceSync: () -> Unit,
     onRefreshStats: () -> Unit,
     onReadBatch: () -> Unit,
     onAck: () -> Unit,
@@ -79,6 +81,9 @@ fun OutboxLabScreen(
     onClearConsole: () -> Unit,
 ) {
     var isRuntimeHelpVisible by remember { mutableStateOf(false) }
+    val payloadPreview = remember(state.selectedCategory, state.selectedWriter) {
+        state.payloadPreview
+    }
 
     if (isRuntimeHelpVisible) {
         RuntimeHelpDialog(
@@ -108,6 +113,8 @@ fun OutboxLabScreen(
                     doorbellCount = state.doorbellCount,
                     busyAction = state.busyAction,
                     onStart = onStart,
+                    onFlush = onFlush,
+                    onForceSync = onForceSync,
                     onHelpClick = { isRuntimeHelpVisible = true },
                 )
             }
@@ -117,11 +124,10 @@ fun OutboxLabScreen(
                     onCategorySelected = onCategorySelected,
                     selectedWriter = state.selectedWriter,
                     onWriterSelected = onWriterSelected,
-                    payloadPreview = state.payloadPreview,
+                    payloadPreview = payloadPreview,
                     busyAction = state.busyAction,
                     onWriteOne = onWriteOne,
                     onBurst = onBurst,
-                    onFlush = onFlush,
                     onRefreshStats = onRefreshStats,
                 )
             }
@@ -188,6 +194,8 @@ private fun MetricsPanel(
     doorbellCount: Long,
     busyAction: String?,
     onStart: () -> Unit,
+    onFlush: () -> Unit,
+    onForceSync: () -> Unit,
     onHelpClick: () -> Unit,
 ) {
     Section(
@@ -223,6 +231,11 @@ private fun MetricsPanel(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    text = "Flush drains accepted records; Force sync asks the OS to persist the active segment.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (stats.isStarted) {
                 StatusPill(
@@ -232,6 +245,14 @@ private fun MetricsPanel(
             } else {
                 PrimaryActionButton("Start", busyAction, onStart)
             }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SecondaryActionButton("Flush", busyAction, onFlush)
+            SecondaryActionButton("Force sync", busyAction, onForceSync)
         }
         Spacer(modifier = Modifier.height(12.dp))
         FlowRow(
@@ -246,7 +267,7 @@ private fun MetricsPanel(
             MetricTile("Dropped", stats.totalDropped().toString())
             MetricTile("File", formatBytes(stats.currentFileSizeBytes))
             MetricTile("Rolls", stats.rollCount.toString())
-            MetricTile("Doorbell", lastDoorbellEvent?.name ?: "None")
+            MetricTile("Doorbell", lastDoorbellEvent?.name ?: "None", width = 152.dp)
             MetricTile("Signals", doorbellCount.toString())
         }
     }
@@ -263,16 +284,15 @@ private fun WriterPanel(
     busyAction: String?,
     onWriteOne: () -> Unit,
     onBurst: (Int) -> Unit,
-    onFlush: () -> Unit,
     onRefreshStats: () -> Unit,
 ) {
     Section(title = "Writer") {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             LabDropdown(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 label = "Category",
                 selectedLabel = selectedCategory.label,
                 items = LAB_CATEGORIES,
@@ -280,7 +300,7 @@ private fun WriterPanel(
                 onItemSelected = onCategorySelected,
             )
             LabDropdown(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
                 label = "Writer",
                 selectedLabel = selectedWriter.label,
                 items = LAB_WRITERS,
@@ -349,7 +369,6 @@ private fun WriterPanel(
             SecondaryActionButton("Write 1", busyAction, onWriteOne)
             SecondaryActionButton("Burst 100", busyAction) { onBurst(100) }
             SecondaryActionButton("Burst 1000", busyAction) { onBurst(1000) }
-            SecondaryActionButton("Flush", busyAction, onFlush)
             TextButton(
                 onClick = onRefreshStats,
                 colors = ButtonDefaults.textButtonColors(
@@ -576,18 +595,22 @@ private fun RuntimeHelpDialog(
                 )
                 HelpStep(
                     title = "3. Flush",
-                    body = "Asks native to finish writing queued records to disk. This is useful in the demo after a burst, but the normal drain still starts from doorbell.",
+                    body = "Waits for accepted records to leave the native queue and reach the active spool segment. It does not force a storage sync.",
                 )
                 HelpStep(
-                    title = "4. Doorbell read",
+                    title = "4. Force sync",
+                    body = "Optionally requests the OS to sync the active segment file to stable storage. Normal demos and app flows can usually skip this.",
+                )
+                HelpStep(
+                    title = "5. Doorbell read",
                     body = "Kotlin listens to native doorbells. When DATA_AVAILABLE arrives, the demo auto-pulls up to $LAB_MAX_BATCH_RECORDS pending durable records without advancing the native cursor.",
                 )
                 HelpStep(
-                    title = "5. Deliver",
+                    title = "6. Deliver",
                     body = "In a real app, Kotlin would POST this batch to Sentry, Loki, or any app-owned sink. This sample only shows the batch and lets you simulate success or failure.",
                 )
                 HelpStep(
-                    title = "6. ACK",
+                    title = "7. ACK",
                     body = "ACK means delivery succeeded for the loaded batch. Native can safely advance the cursor and ring another doorbell if more records remain.",
                 )
                 HelpStep(
@@ -632,6 +655,7 @@ private fun HelpStep(
 private fun MetricTile(
     label: String,
     value: String,
+    width: Dp = 104.dp,
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -639,7 +663,7 @@ private fun MetricTile(
     ) {
         Column(
             modifier = Modifier
-                .width(104.dp)
+                .width(width)
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         ) {
             Text(
@@ -878,6 +902,7 @@ private fun OutboxLabPreview() {
             onWriteOne = {},
             onBurst = {},
             onFlush = {},
+            onForceSync = {},
             onRefreshStats = {},
             onReadBatch = {},
             onAck = {},

@@ -34,9 +34,9 @@ The app decides where, when, and how to sink the data.
 
 ## Project Status
 
-AndroidOutBox is experimental but usable. The public API is intentionally
-small, and the runtime contract is documented and tested. Native/runtime
-internals may still evolve while the project matures.
+AndroidOutBox keeps a small public API with a documented and tested runtime
+contract. Native/runtime internals may still evolve while preserving that
+contract.
 
 The project favors app safety over telemetry completeness. It is designed as a
 bounded outbox, not an unbounded audit log.

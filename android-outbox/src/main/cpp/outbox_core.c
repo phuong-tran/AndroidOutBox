@@ -555,6 +555,23 @@ outbox_status_t outbox_flush(void) {
   return OUTBOX_STATUS_OK;
 }
 
+outbox_status_t outbox_force_sync(void) {
+  outbox_status_t status = outbox_flush();
+  if (status != OUTBOX_STATUS_OK) {
+    return status;
+  }
+  pthread_mutex_lock(&outbox_state.mutex);
+  if (atomic_load_explicit(&outbox_state.started, memory_order_acquire) == 0u ||
+      outbox_state.active_fd < 0) {
+    status = OUTBOX_STATUS_BAD_STATE;
+  } else if (outbox_state.current_file_size_bytes > 0u &&
+             !outbox_spool_fsync_fd(outbox_state.active_fd)) {
+    status = OUTBOX_STATUS_INTERNAL_ERROR;
+  }
+  pthread_mutex_unlock(&outbox_state.mutex);
+  return status;
+}
+
 void outbox_stop(void) {
   /* Stop is lifecycle control, not a hot path. Serialize the full shutdown so
    * direct C callers or test tooling cannot double-join the writer thread while

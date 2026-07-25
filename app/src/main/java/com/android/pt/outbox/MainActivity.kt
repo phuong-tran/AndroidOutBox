@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                     onWriteOne = viewModel::writeOne,
                     onBurst = viewModel::burst,
                     onFlush = viewModel::flush,
+                    onForceSync = viewModel::forceSync,
                     onRefreshStats = viewModel::refreshStats,
                     onReadBatch = viewModel::readBatch,
                     onAck = viewModel::ackBatch,

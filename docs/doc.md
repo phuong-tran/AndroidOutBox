@@ -254,7 +254,13 @@ The write path is intentionally simple:
 1. App code calls `write()` with a compact record.
 2. Native accepts the record into a bounded queue when capacity allows it.
 3. A writer thread drains the queue into the active spool segment.
-4. Native rings a doorbell when durable records may be available.
+4. Native rings a doorbell when spool-backed records may be available.
+
+Appends do not `fsync` each record. AndroidOutBox is a high-throughput outbox,
+not a transactional database. `flush()` only waits for accepted records to leave
+the native queue and reach the spool writer. Apps that need a stable-storage
+barrier can call `forceSync()`, for example from lifecycle or memory-pressure
+hooks, and pay that cost intentionally.
 
 Spool files are split into numbered segments. The active segment is appended to
 until it reaches the configured segment size limit, then AndroidOutBox rotates

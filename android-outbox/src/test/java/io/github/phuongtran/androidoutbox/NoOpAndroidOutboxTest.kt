@@ -19,6 +19,7 @@ class NoOpAndroidOutboxTest {
             ),
         )
         assertFalse(NoOpAndroidOutbox.flush())
+        assertFalse(NoOpAndroidOutbox.forceSync())
         assertNull(NoOpAndroidOutbox.readNextBatch())
         assertFalse(
             NoOpAndroidOutbox.ack(
