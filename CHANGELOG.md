@@ -2,6 +2,14 @@
 
 All notable project changes are documented here.
 
+## 1.3.8 - 2026-07-26
+
+- Added explicit `forceSync()` APIs for apps that choose an OS-level active-segment storage barrier.
+- Kept `flush()` as a Java-style writer drain without per-record `fsync` on the hot append path.
+- Added POSIX-oriented `fsync` retry and directory sync handling for spool file creation and cursor commits.
+- Updated the sample app runtime panel to show separate `Flush` and `Force sync` actions.
+- Published static Maven artifacts under `maven/` for `1.3.8`.
+
 ## 1.3.7 - 2026-07-24
 
 - Added a lambda-backed `AndroidOutboxSinkRunner(...)` factory for composition-first sink setup.
