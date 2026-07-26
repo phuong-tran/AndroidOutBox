@@ -47,8 +47,9 @@ AndroidOutBox is a bounded, best-effort local outbox designed to protect the
 application first.
 
 Records may be dropped under memory pressure, disk limits, retention limits,
-storage cleanup, corruption, or other runtime constraints. Writes must never
-block or destabilize the application.
+storage cleanup, corruption, or other runtime constraints. Writes avoid disk I/O
+on the caller hot path and should fail open instead of destabilizing the
+application.
 
 Reading a batch does not remove it. A provider cursor advances only after ACK,
 allowing failed deliveries to be retried while the records are still retained.
@@ -94,6 +95,10 @@ The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
 for Android ABIs. Gradle metadata, POM metadata, source jar, and checksums are
 also committed under `maven/`.
 
+The synchronous core API can be called from Kotlin or Java. The default
+doorbell channel and `AndroidOutboxSinkRunner` use Kotlin coroutines, so apps
+that use those helpers should provide their own coroutine scope.
+
 ## Kotlin API
 
 ```kotlin
@@ -114,9 +119,6 @@ outbox.write(
 )
 
 outbox.flush()
-// Optional: request an OS-level sync for the active segment when the app wants
-// to pay for a stable-storage barrier.
-outbox.forceSync()
 
 val batch = outbox.readNextBatch(
     providerId = OutboxConfig.DEFAULT_PROVIDER_ID,
@@ -129,6 +131,10 @@ if (batch != null) {
     outbox.ack(ackToken = batch.ackToken)
 }
 ```
+
+`flush()` drains accepted records to the spool writer. Apps that intentionally
+want an OS-level stable-storage barrier can call `forceSync()` from lifecycle or
+memory-pressure hooks.
 
 For production sinks, centralize read/send/ACK ownership with
 `AndroidOutboxSinkRunner`:
@@ -152,6 +158,10 @@ Do not run multiple batch readers for the same provider id. The runner keeps
 one ordered drain path so `readNextBatch -> send -> ack` preserves cursor
 semantics.
 
+`write()` is intended for concurrent callers. Batch reads and ACKs are
+serialized by the default client, but application code should still keep one
+drain owner per provider id.
+
 Use `noBackupFilesDir` or `filesDir` when pending records should survive normal
 cache cleanup. Use `cacheDir` only when records may be discarded by the
 operating system.
@@ -172,8 +182,11 @@ operating system.
 
 Read [docs/doc.md](docs/doc.md) for the design rationale, intended use cases,
 doorbell/read/ACK model, sink orchestration rules, and crash logging boundary.
+Multi-process apps can start from the
+[IPC skeleton](docs/multi-process.md).
 
-Manual test and diagnostic commands are in [docs/testing.md](docs/testing.md).
+Manual test, native smoke, and stress diagnostic commands are in
+[docs/testing.md](docs/testing.md).
 Release notes are tracked in [CHANGELOG.md](CHANGELOG.md). Contribution
 guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

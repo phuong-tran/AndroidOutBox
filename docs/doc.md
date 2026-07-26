@@ -234,6 +234,7 @@ retained. It does not provide exactly-once delivery or indefinite retention.
 | A sink fails to send | Do not ACK; retry later while the record remains retained. |
 | Retention deletes old segments before a provider ACKs them | Those old records are lost for that provider. |
 | A doorbell is missed | Initial/manual drain can still find retained records. |
+| `forceSync()` succeeds | The active segment has been passed to the OS as a stable-storage sync request. |
 
 ACK is the commit signal. Reading a batch is a peek; it does not remove or
 commit the batch.
@@ -344,6 +345,27 @@ provider. The provider should continue from the next retained records. This is
 intentional: a slow or broken sink must not force the app to keep growing disk
 usage forever.
 
+### Drop And Retention Observability
+
+AndroidOutBox exposes pressure counters through `getStats()`:
+
+- `droppedQueueFullCount` increments when the native queue cannot accept another
+  record.
+- `droppedInvalidCount` increments when a record is malformed before enqueueing.
+- `droppedRecordTooLargeCount` increments when the payload exceeds
+  `maxRecordBytes`.
+- `writeFailureCount` increments when the writer cannot format or append a
+  record.
+
+Segment retention is different from hot-path drops. When the retained segment
+count exceeds `maxArchivedSegments + 1`, the oldest archived segment may be
+deleted even if a provider has not ACKed it. That protects disk usage, and the
+affected provider continues from the oldest segment still retained.
+
+Corrupt or unreadable cursor state is clamped back into the retained segment
+range where possible. If files cannot be opened, written, or scanned, operations
+return failure and stats should be checked by the app or diagnostics.
+
 ## Storage Directory
 
 Use an app-private directory for `OutboxConfig.spoolDirectoryPath`.
@@ -371,6 +393,8 @@ processes writing, rotating, reading, ACKing, and cleaning the same spool
 directory. Multi-process apps should either:
 
 - start AndroidOutBox in only one process, or
+- expose that owner through an app-private IPC service; see
+  [multi-process.md](multi-process.md), or
 - use a separate spool directory per process, for example
   `android-outbox/main` and `android-outbox/remote`.
 
@@ -451,6 +475,11 @@ need to copy fd or native-read details:
 ```kotlin
 val doorbells = BlockingOutboxDoorbellChannel(outbox)
 ```
+
+The core outbox API is synchronous. The default doorbell channel and
+`AndroidOutboxSinkRunner` are coroutine helpers layered above it. Java or
+callback-oriented apps can call the synchronous APIs directly and adapt doorbell
+reads into their own executor, callback, or service model.
 
 The runner owns the read/send/ACK sequence for one provider cursor:
 
@@ -739,6 +768,26 @@ AndroidOutBox is intentionally bounded:
 
 The outbox is best-effort. It is designed to preserve useful recent records
 without risking app performance or unbounded disk growth.
+
+### Threading
+
+`write()` is designed for concurrent producers and returns quickly after handing
+the command to native. It does not wait for disk I/O on the caller thread.
+
+Control operations such as `start()`, `flush()`, `forceSync()`,
+`readNextBatch()`, `ack()`, `getStats()`, and `stop()` are serialized by the
+default Kotlin native client. Apps should still keep one logical drain runner
+per provider id so two call sites do not race the same cursor policy.
+
+`readNextBatch()` is a peek and may be retried. `ack()` is the only operation
+that advances a provider cursor.
+
+### Diagnostics
+
+Native smoke and stress diagnostics in [testing.md](testing.md) report JSON with
+queue depth, high-watermark, queue-full retries, and throughput. Throughput is
+device, payload, queue, and sync-policy dependent. In particular, `forceSync()`
+is intentionally outside the normal hot append path.
 
 For delivery, prefer this policy:
 
