@@ -6,6 +6,7 @@
 - [Why Use AndroidOutBox If I Already Use Sentry, Datadog, Firebase, Or Another SDK?](#why-use-androidoutbox-if-i-already-use-sentry-datadog-firebase-or-another-sdk)
 - [Why Does AndroidOutBox Drop Records?](#why-does-androidoutbox-drop-records)
 - [Do Other SDKs Drop Records Too?](#do-other-sdks-drop-records-too)
+- [How Do I Reduce Drops?](#how-do-i-reduce-drops)
 - [Does Best-Effort Mean AndroidOutBox Is Unreliable?](#does-best-effort-mean-androidoutbox-is-unreliable)
 - [Is `forceSync()` Required For Normal Logging?](#is-forcesync-required-for-normal-logging)
 - [Should The Multi-Process Skeleton Handle Binder Reconnect?](#should-the-multi-process-skeleton-handle-binder-reconnect)
@@ -143,6 +144,36 @@ AndroidOutBox makes the trade-off explicit:
 
 That is not a weaker contract than pretending loss never happens. It is a
 contract the app can reason about.
+
+## How Do I Reduce Drops?
+
+Treat drops as a pressure signal, not as a normal success path.
+
+AndroidOutBox exposes explicit limits because the app is in the best position
+to decide what telemetry is worth paying for. If pressure counters increase,
+the app can choose a strategy instead of guessing what a hidden SDK queue did.
+With compact payloads, realistic quotas, and regular draining, drops should be
+rare in normal production use. They are mostly a sign that the app is seeing an
+unusual burst, writing too much, retaining too little, or intentionally running
+with a very small safety budget.
+
+Useful tactics include:
+
+- increase `queueCapacity` if short bursts are valid for the app
+- increase `maxRecordBytes` only when larger payloads are intentional
+- increase `maxSegmentSizeBytes` or `maxArchivedSegments` if the app accepts
+  more disk usage
+- keep payloads compact and single-purpose
+- avoid logging raw request or response bodies
+- sample noisy categories before writing them
+- reserve high-volume debug records for local, debug, or sampled builds
+- keep separate provider cursors for independent sinks
+- drain regularly, and ACK only after the sink accepts the batch
+- monitor `getStats()` so queue pressure and drop counters become visible
+
+The polite contract is not pretending records never drop. The polite contract
+is rejecting clearly, exposing the reason, keeping the app in control of quota,
+and letting the app decide which records are important enough to keep.
 
 ## Does Best-Effort Mean AndroidOutBox Is Unreliable?
 
