@@ -26,6 +26,49 @@ how the app retries delivery. The app owns those choices.
 The useful comparison is the defensive boundary: logging should not be allowed
 to consume unbounded memory, disk, CPU, or latency on the app's critical path.
 
+## Why Use AndroidOutBox If I Already Use Sentry, Datadog, Firebase, Or Another SDK?
+
+You may still want those products. Sentry, Datadog, Firebase Crashlytics,
+Firebase Analytics, Bugsnag, New Relic, Embrace, OpenTelemetry-based clients,
+and similar tools can be valuable once the app decides to send telemetry to
+them.
+
+AndroidOutBox solves a different problem: it gives the app an explicit,
+bounded, app-owned handoff point before data enters any vendor SDK or network
+pipeline.
+
+Full observability SDKs often work by taking ownership of more runtime behavior:
+
+- automatic exception, breadcrumb, lifecycle, network, or performance capture
+- background queues and upload workers
+- retry, batching, persistence, and rate-limit behavior hidden behind SDK calls
+- extra payload enrichment such as device, session, user, and environment data
+- network scheduling that may interact with app startup, foreground work, or
+  low-battery conditions
+
+Those features can be useful, but they also make reasoning harder. When app
+startup becomes slower, battery drain increases, disk usage grows, network
+traffic spikes, or privacy review asks why a field was sent, the answer may be
+spread across SDK defaults, enabled integrations, background workers, remote
+configuration, and app code.
+
+AndroidOutBox keeps the first boundary under app control:
+
+| Question | Vendor SDK First | AndroidOutBox First |
+|---|---|---|
+| What gets captured? | Often includes automatic SDK integrations. | Only records the app explicitly writes. |
+| Who owns payload shape? | SDK defaults may enrich or transform data. | The app owns every payload field. |
+| What happens under pressure? | Behavior depends on each SDK's queue, retry, and persistence policy. | Queue, record size, segment size, and retention limits are explicit. |
+| Can logging affect the hot path? | SDK calls may hide work behind a small API surface. | `write()` is designed to stay off disk I/O on the caller hot path. |
+| How is delivery committed? | SDK-specific. | Read, send, then ACK. |
+| Can the app swap sinks later? | Often tied to vendor concepts. | The outbox is vendor-agnostic. |
+
+This is not an argument that vendor SDKs are bad. It is an argument for keeping
+the app's critical telemetry boundary explicit. An app can drain AndroidOutBox
+to Sentry, Datadog, Firebase, its own backend, a file uploader, or several sinks
+at once. The difference is that the app decides what crosses that boundary and
+when.
+
 ## Why Does AndroidOutBox Drop Records?
 
 Because a logging system should not take down the application it is observing.
