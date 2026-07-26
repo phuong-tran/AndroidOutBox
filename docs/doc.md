@@ -20,6 +20,9 @@
 - [Payload Guidance](#payload-guidance)
 - [Operational Notes](#operational-notes)
 
+Related docs: [FAQ](faq.md), [Multi-process skeleton](multi-process.md),
+and [testing commands](testing.md).
+
 ## Why It Exists
 
 AndroidOutBox exists for apps that want app-owned event durability without
