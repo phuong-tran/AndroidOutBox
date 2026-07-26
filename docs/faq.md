@@ -1,5 +1,15 @@
 # AndroidOutBox FAQ
 
+## Table Of Contents
+
+- [Is AndroidOutBox Like Nginx For Mobile Logging?](#is-androidoutbox-like-nginx-for-mobile-logging)
+- [Why Use AndroidOutBox If I Already Use Sentry, Datadog, Firebase, Or Another SDK?](#why-use-androidoutbox-if-i-already-use-sentry-datadog-firebase-or-another-sdk)
+- [Why Does AndroidOutBox Drop Records?](#why-does-androidoutbox-drop-records)
+- [Does Best-Effort Mean AndroidOutBox Is Unreliable?](#does-best-effort-mean-androidoutbox-is-unreliable)
+- [Is `forceSync()` Required For Normal Logging?](#is-forcesync-required-for-normal-logging)
+- [Should The Multi-Process Skeleton Handle Binder Reconnect?](#should-the-multi-process-skeleton-handle-binder-reconnect)
+- [Should Every Process Create Its Own AndroidOutBox?](#should-every-process-create-its-own-androidoutbox)
+
 ## Is AndroidOutBox Like Nginx For Mobile Logging?
 
 In one useful sense, yes.
@@ -28,46 +38,68 @@ to consume unbounded memory, disk, CPU, or latency on the app's critical path.
 
 ## Why Use AndroidOutBox If I Already Use Sentry, Datadog, Firebase, Or Another SDK?
 
-You may still want those products. Sentry, Datadog, Firebase Crashlytics,
-Firebase Analytics, Bugsnag, New Relic, Embrace, OpenTelemetry-based clients,
-and similar tools can be valuable once the app decides to send telemetry to
-them.
+Because the first SDK is rarely the last one.
 
-AndroidOutBox solves a different problem: it gives the app an explicit,
-bounded, app-owned handoff point before data enters any vendor SDK or network
-pipeline.
+This is a common production shape:
 
-Full observability SDKs often work by taking ownership of more runtime behavior:
+1. The app already has Firebase for crashes, ANRs, and analytics.
+2. A platform team asks for Sentry, Datadog, or New Relic for dashboards.
+3. A product team asks for Firebase Analytics or another event stream.
+4. A backend team asks for OpenTelemetry-style traces.
+5. A compliance or support team asks for a private upload path.
 
-- automatic exception, breadcrumb, lifecycle, network, or performance capture
-- background queues and upload workers
-- retry, batching, persistence, and rate-limit behavior hidden behind SDK calls
-- extra payload enrichment such as device, session, user, and environment data
-- network scheduling that may interact with app startup, foreground work, or
-  low-battery conditions
+Each request may be reasonable in isolation. The problem is what happens when
+every tool wants to sit directly inside the app runtime.
 
-Those features can be useful, but they also make reasoning harder. When app
-startup becomes slower, battery drain increases, disk usage grows, network
-traffic spikes, or privacy review asks why a field was sent, the answer may be
-spread across SDK defaults, enabled integrations, background workers, remote
-configuration, and app code.
+Now the app may have two SDKs watching crashes and ANRs, two SDKs observing
+lifecycle, two SDKs buffering records, two SDKs retrying uploads, and two SDKs
+trying to explain the same session in their own vocabulary. Neither SDK knows
+it is the secondary one. The app is the place where those overlapping
+assumptions meet.
 
-AndroidOutBox keeps the first boundary under app control:
+The team may also end up with two sources of truth. A crash in Firebase may need
+to be mapped to an issue in Sentry, a trace in Datadog, a release in CI, and a
+user or session in the app's backend. If those identifiers, sampling rules, and
+payload fields do not line up, each dashboard can tell a slightly different
+story about the same failure.
 
-| Question | Vendor SDK First | AndroidOutBox First |
+For many Android apps, crash and ANR visibility is already covered well by the
+Google stack through Firebase and Play Console. If the organization still wants
+those signals in Sentry, Loki, Datadog, or an internal system, that does not
+automatically mean millions of app installs should pay for another crash/ANR
+runtime. Often the cleaner boundary is an adapter or sink that forwards the
+app-owned record after capture, where cost and policy are easier to control.
+
+Full observability SDKs often bring their own capture, queues, persistence,
+retry, enrichment, background work, network scheduling, and remote defaults. As
+more SDKs are added, the app can end up with several components observing the
+same lifecycle, recording similar events, waking background workers, buffering
+payloads, and uploading on their own schedules.
+
+That makes simple questions harder to answer:
+
+| Question | With Many SDKs On The Hot Path | With AndroidOutBox As The Boundary |
 |---|---|---|
-| What gets captured? | Often includes automatic SDK integrations. | Only records the app explicitly writes. |
-| Who owns payload shape? | SDK defaults may enrich or transform data. | The app owns every payload field. |
-| What happens under pressure? | Behavior depends on each SDK's queue, retry, and persistence policy. | Queue, record size, segment size, and retention limits are explicit. |
-| Can logging affect the hot path? | SDK calls may hide work behind a small API surface. | `write()` is designed to stay off disk I/O on the caller hot path. |
-| How is delivery committed? | SDK-specific. | Read, send, then ACK. |
-| Can the app swap sinks later? | Often tied to vendor concepts. | The outbox is vendor-agnostic. |
+| Who decided this event should exist? | It may come from app code, auto-capture, an integration, or remote defaults. | The app wrote the record explicitly. |
+| Why did startup get slower? | Several SDKs may initialize, inspect state, or install hooks. | The first handoff is a small bounded write path. |
+| Why did battery or network usage increase? | Upload workers, retries, and batching policies may overlap. | The app decides which sinks drain and when. |
+| Why is disk usage growing? | Each SDK may own a private cache or queue. | Queue, record size, segment size, and retention are explicit. |
+| Why was this field sent? | Payload enrichment may happen inside SDK defaults. | Payload shape is app-owned. |
+| Which dashboard is the source of truth? | Crash, trace, session, and release ids may need manual mapping across tools. | The app writes one record shape and can fan it out to multiple sinks. |
+| Who pays for duplicate crash and ANR capture? | Every installed app instance pays in runtime hooks, caches, and uploads. | The app can capture once and adapt downstream. |
+| How do we add a second destination? | Add another SDK or another SDK integration point. | Add another provider cursor and sink. |
+| How is delivery committed? | SDK-specific and often hidden. | Read, send, then ACK. |
 
-This is not an argument that vendor SDKs are bad. It is an argument for keeping
-the app's critical telemetry boundary explicit. An app can drain AndroidOutBox
-to Sentry, Datadog, Firebase, its own backend, a file uploader, or several sinks
-at once. The difference is that the app decides what crosses that boundary and
-when.
+AndroidOutBox does not replace every vendor product. It gives the app one
+controlled telemetry boundary before any vendor or backend receives data. From
+there, the app can drain to Sentry, Datadog, Firebase, Bugsnag, New Relic,
+Embrace, an OpenTelemetry collector, its own backend, or several destinations
+at once.
+
+The point is not "never use vendor SDKs." The point is to avoid letting every
+new telemetry requirement install another independent runtime inside the app's
+critical path. AndroidOutBox keeps capture, payload shape, pressure limits, and
+delivery commit policy explainable.
 
 ## Why Does AndroidOutBox Drop Records?
 
