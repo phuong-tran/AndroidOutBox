@@ -5,6 +5,7 @@
 - [Is AndroidOutBox Like Nginx For Mobile Logging?](#is-androidoutbox-like-nginx-for-mobile-logging)
 - [Why Use AndroidOutBox If I Already Use Sentry, Datadog, Firebase, Or Another SDK?](#why-use-androidoutbox-if-i-already-use-sentry-datadog-firebase-or-another-sdk)
 - [Why Does AndroidOutBox Drop Records?](#why-does-androidoutbox-drop-records)
+- [Do Other SDKs Drop Records Too?](#do-other-sdks-drop-records-too)
 - [Does Best-Effort Mean AndroidOutBox Is Unreliable?](#does-best-effort-mean-androidoutbox-is-unreliable)
 - [Is `forceSync()` Required For Normal Logging?](#is-forcesync-required-for-normal-logging)
 - [Should The Multi-Process Skeleton Handle Binder Reconnect?](#should-the-multi-process-skeleton-handle-binder-reconnect)
@@ -70,6 +71,13 @@ automatically mean millions of app installs should pay for another crash/ANR
 runtime. Often the cleaner boundary is an adapter or sink that forwards the
 app-owned record after capture, where cost and policy are easier to control.
 
+For example, Sentry can be treated as a sink instead of a second in-app crash
+owner. The app can capture one app-owned record, drain it once, and have a
+sink or backend adapter translate that payload into the destination protocol,
+such as Sentry envelopes, Loki log streams, or an internal ingestion endpoint.
+At the app boundary, one entrypoint that accepts the payload is usually enough;
+the vendor-specific mapping can live downstream.
+
 Full observability SDKs often bring their own capture, queues, persistence,
 retry, enrichment, background work, network scheduling, and remote defaults. As
 more SDKs are added, the app can end up with several components observing the
@@ -87,6 +95,7 @@ That makes simple questions harder to answer:
 | Why was this field sent? | Payload enrichment may happen inside SDK defaults. | Payload shape is app-owned. |
 | Which dashboard is the source of truth? | Crash, trace, session, and release ids may need manual mapping across tools. | The app writes one record shape and can fan it out to multiple sinks. |
 | Who pays for duplicate crash and ANR capture? | Every installed app instance pays in runtime hooks, caches, and uploads. | The app can capture once and adapt downstream. |
+| Do we need another in-app runtime just to reach a destination? | The destination often arrives as another SDK. | The destination can be treated as a sink or adapter. |
 | How do we add a second destination? | Add another SDK or another SDK integration point. | Add another provider cursor and sink. |
 | How is delivery committed? | SDK-specific and often hidden. | Read, send, then ACK. |
 
@@ -111,6 +120,29 @@ or discard telemetry so the app can keep running.
 
 That trade-off is deliberate. Losing telemetry is bad; crashing, freezing, or
 filling user storage because of telemetry is worse.
+
+## Do Other SDKs Drop Records Too?
+
+In practice, yes. There are physical and runtime reasons no mobile telemetry
+SDK can fully avoid: disk full, process death while writing, power loss before
+data reaches stable storage, OS cleanup, corruption, network failure, and
+backend rejection.
+
+Then there are SDK policy reasons. A full SDK may reject, sample, evict,
+coalesce, rate-limit, or retry data behind its own queue, cache, uploader,
+sampler, retention policy, remote configuration, or backend ingestion limits.
+That does not make the data loss disappear. It only moves the decision into a
+component the app may not fully control.
+
+AndroidOutBox makes the trade-off explicit:
+
+- if the in-memory queue is full, the record can be dropped
+- if the record is too large, it can be rejected
+- if retained segments exceed configured limits, old records can be removed
+- if the app does not ACK, delivery can retry while the record remains retained
+
+That is not a weaker contract than pretending loss never happens. It is a
+contract the app can reason about.
 
 ## Does Best-Effort Mean AndroidOutBox Is Unreliable?
 
