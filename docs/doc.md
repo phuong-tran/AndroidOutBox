@@ -45,10 +45,11 @@ AndroidOutBox takes a narrower position:
 The goal is not to replace every observability tool. The goal is to provide a
 small durable handoff point between app code and any later consumer.
 
-AndroidOutBox protects the application first. Records may be dropped under
-memory pressure, disk limits, retention limits, storage cleanup, corruption, or
-other runtime constraints. Application behavior must never depend on an outbox
-write succeeding.
+AndroidOutBox protects the application first. Like any bounded mobile logging
+pipeline, it cannot guarantee that every accepted record survives power loss,
+process death, OS cleanup, corruption, retention limits, or storage pressure.
+It makes that boundary explicit: application behavior must never depend on an
+outbox write succeeding, and logging should never destabilize the app.
 
 ## Scope Boundary
 
@@ -131,6 +132,11 @@ Do not use AndroidOutBox as:
 AndroidOutBox is intentionally best-effort and bounded. When disk or queue
 limits are reached, old data may be dropped according to the configured limits.
 That is a feature, not a bug: the library should protect the app first.
+
+This is separate from common mobile failure windows that affect any logging
+pipeline, such as power-off, process death during a write, OS storage cleanup,
+or filesystem corruption. AndroidOutBox documents those limits instead of
+claiming impossible lossless guarantees.
 
 ## Core Model
 
@@ -221,13 +227,16 @@ doorbells to wake future drains.
 ## Delivery Guarantees
 
 AndroidOutBox provides retryable ACK-based delivery while records remain
-retained. It does not provide exactly-once delivery or indefinite retention.
+retained. It does not provide exactly-once delivery, indefinite retention, or a
+100 percent no-loss guarantee. Those guarantees are not realistic for a bounded
+mobile logging component.
 
 | Situation | Result |
 |---|---|
 | `write()` cannot hand the record to native | The call returns `false`; the app flow should continue. |
 | Native queue is full | The record may be dropped and pressure counters are updated. |
-| A record is accepted but the process dies before the writer drains it | The record may be lost. |
+| A record is accepted but the process dies before the writer drains it | The record may be lost, as with any async logging pipeline. |
+| Power is lost before data reaches stable storage | Recently accepted records may be lost unless the app paid for an explicit storage barrier. |
 | A record is written to the spool and not ACKed | A later read can return it again while it is still retained. |
 | Network send succeeds but the app dies before ACK | The same batch may be delivered again. Consumers should tolerate duplicates. |
 | ACK succeeds | The provider cursor commits past the loaded batch. |
@@ -767,7 +776,9 @@ AndroidOutBox is intentionally bounded:
 - `maxArchivedSegments` caps retained files
 
 The outbox is best-effort. It is designed to preserve useful recent records
-without risking app performance or unbounded disk growth.
+without risking app performance or unbounded disk growth. The documented loss
+windows are not unique to AndroidOutBox; they are the normal trade-off for
+bounded, app-safe mobile logging.
 
 ### Threading
 

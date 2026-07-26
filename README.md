@@ -11,9 +11,11 @@ It is not a Logcat reader. It is not a crash reporter. It is not an
 observability SDK. It is not tied to Sentry, Datadog, Firebase, WorkManager, or
 any backend.
 
-AndroidOutBox protects the application first. Records are best-effort and may
-be discarded under memory pressure, disk limits, retention limits, storage
-cleanup, corruption, or other runtime constraints.
+AndroidOutBox protects the application first. Like any bounded mobile logging
+pipeline, it cannot guarantee that every accepted record survives power loss,
+process death, OS cleanup, corruption, retention limits, or storage pressure.
+Its contract is to make those trade-offs explicit while keeping app behavior
+independent from logging success.
 
 The app must explicitly decide what is worth recording. AndroidOutBox does not
 auto-capture exceptions, lifecycle events, network calls, breadcrumbs, user
@@ -46,10 +48,12 @@ bounded outbox, not an unbounded audit log.
 AndroidOutBox is a bounded, best-effort local outbox designed to protect the
 application first.
 
-Records may be dropped under memory pressure, disk limits, retention limits,
-storage cleanup, corruption, or other runtime constraints. Writes avoid disk I/O
-on the caller hot path and should fail open instead of destabilizing the
-application.
+No bounded mobile logging SDK can promise lossless delivery in every runtime
+failure window. Records can be lost around power-off, process death during a
+write, storage cleanup, corruption, retention limits, or quota pressure. In
+addition, AndroidOutBox may intentionally drop records when limits are reached
+so logging cannot destabilize the host app. Writes avoid disk I/O on the caller
+hot path and should fail open instead of destabilizing the application.
 
 Reading a batch does not remove it. A provider cursor advances only after ACK,
 allowing failed deliveries to be retried while the records are still retained.
