@@ -42,11 +42,11 @@
         {
           "name": "android-outbox-1.3.8.aar",
           "url": "android-outbox-1.3.8.aar",
-          "size": 147595,
-          "sha512": "f7fba1011ff839e2d575ba79c778ae676b4eba117a57b42cbcd18993e6f4a1227909c8c2bfdf40f3d6a396d263a7891d8b0e4c58e10fad5fd0ac6aa10aa7651e",
-          "sha256": "0d875a0a5e5304182ce532173740fa1847c711d53bfa7673614ec7dba1a265ce",
-          "sha1": "14dc516637b3bc8e34d852e6b190df290ab2dfcd",
-          "md5": "955e903461bcd2622a2a70117d75d727"
+          "size": 147740,
+          "sha512": "31836433b29fef9fa870ff68566bfbb7a1c749e554e434f22c69c6052e98a68284de3bda325967e315f14ed90c09b3a0911efc7bb5d5954ee43b43870ed45cc9",
+          "sha256": "341ba4f1c7c9b5b70b1a403b608e5169314e266f4505c42c491fe4c4dfa16d47",
+          "sha1": "63ac91832355a698cd15dd00189def5aafded12d",
+          "md5": "c931ebd1ca19b50a287d549888506266"
         }
       ]
     },
@@ -78,11 +78,11 @@
         {
           "name": "android-outbox-1.3.8.aar",
           "url": "android-outbox-1.3.8.aar",
-          "size": 147595,
-          "sha512": "f7fba1011ff839e2d575ba79c778ae676b4eba117a57b42cbcd18993e6f4a1227909c8c2bfdf40f3d6a396d263a7891d8b0e4c58e10fad5fd0ac6aa10aa7651e",
-          "sha256": "0d875a0a5e5304182ce532173740fa1847c711d53bfa7673614ec7dba1a265ce",
-          "sha1": "14dc516637b3bc8e34d852e6b190df290ab2dfcd",
-          "md5": "955e903461bcd2622a2a70117d75d727"
+          "size": 147740,
+          "sha512": "31836433b29fef9fa870ff68566bfbb7a1c749e554e434f22c69c6052e98a68284de3bda325967e315f14ed90c09b3a0911efc7bb5d5954ee43b43870ed45cc9",
+          "sha256": "341ba4f1c7c9b5b70b1a403b608e5169314e266f4505c42c491fe4c4dfa16d47",
+          "sha1": "63ac91832355a698cd15dd00189def5aafded12d",
+          "md5": "c931ebd1ca19b50a287d549888506266"
         }
       ]
     },
@@ -98,11 +98,11 @@
         {
           "name": "android-outbox-1.3.8-sources.jar",
           "url": "android-outbox-1.3.8-sources.jar",
-          "size": 24013,
-          "sha512": "be45a5f5d1bf7873ea7a56afdc8100e2be215f47e7539349b6a75933f3f434dc9b123f69890d81b76015e399dc5ea0092c2814f1dc9b1cd874e49eb9d7e32c7b",
-          "sha256": "a69993c90b8d2c3fcfbfd801e24d6dd89bce7659243a264151de815f49ec1c2c",
-          "sha1": "c03ae8ebf22af962f96466d5c943e14975cafd34",
-          "md5": "21a70d6d8aa27eb51377fcbdffac5968"
+          "size": 24149,
+          "sha512": "462dff81284bd84a938de1f8459c6b4544d2ea6f46bf3b8ab332080af43522dfb19a26f1d2f7aa17cd3b8b2807ec281f9e38c47afa1e9acf917b346eadaf1de0",
+          "sha256": "44fa39775d52a0b23894a80165e7c789b137e65feb4d53dc995d07d689f8caa9",
+          "sha1": "20fc070c8de17d100b6a0f3c4d3b8ccb280a53d2",
+          "md5": "7d3d7077cf809b72b1a7535d4eccd830"
         }
       ]
     }

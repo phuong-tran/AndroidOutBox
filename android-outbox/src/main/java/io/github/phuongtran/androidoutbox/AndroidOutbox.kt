@@ -11,11 +11,11 @@ interface AndroidOutbox : OutboxDoorbellReader, OutboxRecordStore {
     fun start(config: OutboxConfig): Boolean
 
     /**
-     * Enqueues a sanitized payload for local persistence.
+     * Hands a sanitized payload to native for best-effort local persistence.
      *
-     * Returns false when the outbox is unavailable or cannot hand the frame to
-     * native. Native queue pressure is reported through counters/doorbells so
-     * write failure never affects the caller flow.
+     * Returns true after Kotlin writes a complete command frame to the native
+     * pipe. Native queue pressure is reported asynchronously through
+     * counters/doorbells, so this result is not a durable-acceptance signal.
      */
     fun write(
         level: OutboxRecordLevel,

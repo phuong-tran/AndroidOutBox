@@ -793,6 +793,43 @@ static int test_ack_requires_existing_provider_cursor(void) {
   return 0;
 }
 
+static int test_ack_retry_persists_after_cursor_write_failure(void) {
+  test_context_t context = {};
+  outbox_record_batch_t batch = {};
+  char cursor_dir[512] = {};
+  char* ack_token = NULL;
+  outbox_status_t ack_status = OUTBOX_STATUS_OK;
+  ASSERT_TRUE(setup_context(&context));
+  ASSERT_TRUE(start_logger(&context));
+  ASSERT_TRUE(log_and_flush("network.http", "first"));
+
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_TRUE(batch.record_count == 1u);
+  ASSERT_TRUE(strstr(batch.records[0], "first") != NULL);
+  ack_token = strdup(batch.ack_token);
+  ASSERT_TRUE(ack_token != NULL);
+  outbox_free_record_batch(&batch);
+
+  snprintf(cursor_dir, sizeof(cursor_dir), "%s/cursors", context.spool_dir);
+  ASSERT_TRUE(chmod(cursor_dir, 0500) == 0);
+  ack_status = outbox_ack(TEST_PRIMARY_PROVIDER_ID, ack_token);
+  ASSERT_TRUE(chmod(cursor_dir, 0700) == 0);
+  ASSERT_TRUE(ack_status == OUTBOX_STATUS_INTERNAL_ERROR);
+
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, ack_token));
+  free(ack_token);
+  ack_token = NULL;
+
+  outbox_stop();
+  ASSERT_TRUE(start_logger(&context));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
+  ASSERT_TRUE(batch.record_count == 0u);
+  outbox_free_record_batch(&batch);
+
+  teardown_context(&context);
+  return 0;
+}
+
 static int test_data_available_doorbell_is_coalesced_until_batch_read(void) {
   test_context_t context = {};
   outbox_pipes_t pipes = {};
@@ -1084,7 +1121,7 @@ static int test_concurrent_producers_flush_all_records(void) {
 
 static int test_large_payload_round_trips_through_spool(void) {
   enum {
-    PAYLOAD_BYTES = 64u * 1024u,
+    PAYLOAD_BYTES = (64u * 1024u) + 1u,
   };
   test_context_t context = {};
   outbox_config_t config = {};
@@ -1161,6 +1198,7 @@ int main(void) {
   ASSERT_TRUE(test_ack_reports_remaining_backlog() == 0);
   ASSERT_TRUE(test_provider_cursors_are_independent() == 0);
   ASSERT_TRUE(test_ack_requires_existing_provider_cursor() == 0);
+  ASSERT_TRUE(test_ack_retry_persists_after_cursor_write_failure() == 0);
   ASSERT_TRUE(test_data_available_doorbell_is_coalesced_until_batch_read() == 0);
   ASSERT_TRUE(test_control_pipe_accepts_log_command_frame() == 0);
   ASSERT_TRUE(test_control_pipe_force_syncs_active_segment() == 0);

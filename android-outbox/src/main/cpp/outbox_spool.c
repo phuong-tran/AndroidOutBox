@@ -237,18 +237,21 @@ int outbox_spool_parse_cursor_token(
   return 1;
 }
 
-static int persist_cursor_locked(const outbox_provider_cursor_t* cursor) {
+static int persist_cursor_position_locked(const outbox_provider_cursor_t* cursor,
+                                          uint64_t ack_segment_id,
+                                          uint64_t ack_offset) {
   char token[OUTBOX_CURSOR_TOKEN_CAPACITY] = {};
   char* temporary_path = NULL;
   int required = 0;
   int fd = -1;
   int ok = 0;
+  int close_result = -1;
 
   /* Cursor persistence uses write-temp/fsync/rename so a crash leaves either
    * the previous ack point or the new one, never a half-written token. */
   if (cursor == NULL || cursor->cursor_file_path == NULL ||
-      !encode_cursor_token(cursor->ack_segment_id,
-                           cursor->ack_offset,
+      !encode_cursor_token(ack_segment_id,
+                           ack_offset,
                            token,
                            sizeof(token))) {
     return 0;
@@ -268,12 +271,16 @@ static int persist_cursor_locked(const outbox_provider_cursor_t* cursor) {
   if (fd >= 0 &&
       outbox_write_all_bytes(fd, token, strlen(token)) &&
       outbox_write_all_bytes(fd, "\n", 1u) &&
-      outbox_spool_fsync_fd(fd) &&
-      close(fd) == 0 &&
-      rename(temporary_path, cursor->cursor_file_path) == 0 &&
-      sync_parent_directory_path(cursor->cursor_file_path)) {
-    ok = 1;
-  } else if (fd >= 0) {
+      outbox_spool_fsync_fd(fd)) {
+    close_result = close(fd);
+    fd = -1;
+    if (close_result == 0 &&
+        rename(temporary_path, cursor->cursor_file_path) == 0 &&
+        sync_parent_directory_path(cursor->cursor_file_path)) {
+      ok = 1;
+    }
+  }
+  if (fd >= 0) {
     close(fd);
   }
   if (ok == 0) {
@@ -494,11 +501,11 @@ int outbox_spool_cleanup_old_segments_locked(
       if (cursor->active == 0u || cursor->ack_segment_id >= min_segment_id) {
         continue;
       }
-      cursor->ack_segment_id = min_segment_id;
-      cursor->ack_offset = 0u;
-      if (!persist_cursor_locked(cursor)) {
+      if (!persist_cursor_position_locked(cursor, min_segment_id, 0u)) {
         return 0;
       }
+      cursor->ack_segment_id = min_segment_id;
+      cursor->ack_offset = 0u;
     }
   }
   return 1;
@@ -772,10 +779,13 @@ outbox_status_t outbox_ack(
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
 
+  if (!persist_cursor_position_locked(cursor, segment_id, offset)) {
+    pthread_mutex_unlock(&outbox_state.mutex);
+    return OUTBOX_STATUS_INTERNAL_ERROR;
+  }
   cursor->ack_segment_id = segment_id;
   cursor->ack_offset = offset;
-  if (!persist_cursor_locked(cursor) ||
-      !outbox_spool_cleanup_old_segments_locked(&outbox_state)) {
+  if (!outbox_spool_cleanup_old_segments_locked(&outbox_state)) {
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INTERNAL_ERROR;
   }

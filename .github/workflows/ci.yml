@@ -59,6 +59,18 @@ jobs:
       - name: Unit tests
         run: ./gradlew :android-outbox:testDebugUnitTest --console=plain
 
+      - name: Host-native smoke
+        run: |
+          ./gradlew -q :android-outbox:testNativeHost \
+            -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
+
+      - name: Host-JNI integration
+        run: |
+          ./gradlew :android-outbox:testDebugUnitTest \
+            --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
+            -PandroidOutboxHostJni=true \
+            --console=plain
+
       - name: Android lint
         run: ./gradlew :android-outbox:lintRelease --console=plain
 

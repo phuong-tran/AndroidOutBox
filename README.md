@@ -140,6 +140,14 @@ if (batch != null) {
 want an OS-level stable-storage barrier can call `forceSync()` from lifecycle or
 memory-pressure hooks.
 
+`write()` returns whether Kotlin handed a complete command frame to native. It
+does not wait for native queue acceptance or disk persistence; watch
+`getStats()` and doorbells for queue pressure and drops.
+
+The `64 * 1024` value above is only a default batch pull budget. Pipe frames are
+length-prefixed and read to completion; oversized records are rejected at the
+write/config boundary instead of by a 64 KiB pipe ceiling.
+
 For production sinks, centralize read/send/ACK ownership with
 `AndroidOutboxSinkRunner`:
 

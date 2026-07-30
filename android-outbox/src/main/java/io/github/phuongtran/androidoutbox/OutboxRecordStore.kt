@@ -21,6 +21,11 @@ interface OutboxRecordStore {
 
     companion object {
         const val DEFAULT_MAX_RECORDS = 32
+        /**
+         * Default batch pull budget. This is not a pipe frame ceiling; the fd
+         * protocol reads length-prefixed frames to completion, while record size
+         * is bounded at write/configuration time.
+         */
         const val DEFAULT_MAX_BYTES = 64 * 1024
     }
 }

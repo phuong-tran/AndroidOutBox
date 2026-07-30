@@ -186,6 +186,10 @@ val batch = outbox.readNextBatch(
 )
 ```
 
+`maxBytes` is a per-batch pull budget, not a pipe frame ceiling. The native/Kotlin
+fd protocol reads length-prefixed frames to completion; record size is bounded by
+`maxRecordBytes` before enqueueing.
+
 The app can inspect, transform, or deliver the records. If delivery fails, the
 app should not ACK.
 
@@ -236,8 +240,8 @@ mobile logging component.
 
 | Situation | Result |
 |---|---|
-| `write()` cannot hand the record to native | The call returns `false`; the app flow should continue. |
-| Native queue is full | The record may be dropped and pressure counters are updated. |
+| `write()` cannot hand the command frame to native | The call returns `false`; the app flow should continue. |
+| Native queue is full after handoff | The record may be dropped and pressure counters/doorbells are updated asynchronously. |
 | A record is accepted but the process dies before the writer drains it | The record may be lost, as with any async logging pipeline. |
 | Power is lost before data reaches stable storage | Recently accepted records may be lost unless the app paid for an explicit storage barrier. |
 | A record is written to the spool and not ACKed | A later read can return it again while it is still retained. |
@@ -323,7 +327,7 @@ application.
 |---|---|---|---|
 | `spoolDirectoryPath` | Required | App-private directory for spool segments and provider cursors. | If the directory cannot be created or opened, `start()` fails and the outbox stays stopped. |
 | `defaultProviderId` | `default` | Cursor id used when a caller does not pass an explicit provider id. | It must match the provider id format. Invalid ids are rejected by `OutboxConfig`. |
-| `queueCapacity` | `256` | Maximum number of records that may wait in native memory before the writer persists them. | When the queue is full, new writes are rejected, `write()` returns `false`, and pressure stats are updated. |
+| `queueCapacity` | `256` | Maximum number of records that may wait in native memory before the writer persists them. | When the queue is full, native may drop handed-off records and update pressure stats/doorbells. |
 | `maxRecordBytes` | `4096` | Maximum payload size for one record. | Oversized records are rejected before enqueueing. AndroidOutBox does not split or partially write a record. |
 | `maxSegmentSizeBytes` | `524288` | Approximate size at which the active spool segment rotates. | The writer rolls to a new segment instead of growing the active segment indefinitely. |
 | `maxArchivedSegments` | `3` | Number of rolled segments retained beside the active segment. | Oldest archived segments are deleted when the retained segment count exceeds the configured budget. |
@@ -681,12 +685,12 @@ class AndroidOutboxCrashMonitor(
         throwable: Throwable,
     ) {
         runCatching {
-            val accepted = outbox.write(
+            val handedOff = outbox.write(
                 level = OutboxRecordLevel.FATAL,
                 category = "runtime.crash",
                 payload = throwable.toCompactCrashPayload(thread),
             )
-            if (accepted) {
+            if (handedOff) {
                 outbox.flush()
             }
         }
@@ -785,8 +789,13 @@ bounded, app-safe mobile logging.
 
 ### Threading
 
-`write()` is designed for concurrent producers and returns quickly after handing
-the command to native. It does not wait for disk I/O on the caller thread.
+`write()` is designed for concurrent producers and returns after handing the
+command frame to native. It does not wait for native enqueue confirmation or disk
+I/O on the caller thread.
+
+The control pipe itself is not capped at the default 64 KiB batch size. That
+default only keeps ordinary drain passes small; callers may request larger
+batches when their configured record and memory budgets allow it.
 
 Control operations such as `start()`, `flush()`, `forceSync()`,
 `readNextBatch()`, `ack()`, `getStats()`, and `stop()` are serialized by the
