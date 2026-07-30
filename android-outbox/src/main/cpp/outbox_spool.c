@@ -85,6 +85,10 @@ static int sync_parent_directory_path(const char* path) {
   return ok;
 }
 
+static int size_multiply_overflows(size_t count, size_t item_size) {
+  return item_size != 0u && count > SIZE_MAX / item_size;
+}
+
 int outbox_spool_ensure_directory(const char* path) {
   struct stat stat_buffer;
   if (path == NULL || path[0] == '\0') {
@@ -603,7 +607,7 @@ outbox_status_t outbox_read_next_batch(
   }
   memset(out_batch, 0, sizeof(*out_batch));
 
-  if ((size_t)max_records > SIZE_MAX / sizeof(*records)) {
+  if (size_multiply_overflows((size_t)max_records, sizeof(*records))) {
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
   records = (char**)calloc(max_records, sizeof(*records));

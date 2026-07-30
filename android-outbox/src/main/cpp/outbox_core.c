@@ -407,7 +407,7 @@ outbox_status_t outbox_start(
       outbox_spool_line_buffer_capacity(max_record_bytes);
   outbox_state.payload_slot_bytes = align_up_size((size_t)max_record_bytes, OUTBOX_CACHELINE);
   if (outbox_state.payload_slot_bytes == 0u ||
-      (size_t)queue_capacity > SIZE_MAX / outbox_state.payload_slot_bytes) {
+      size_multiply_overflows((size_t)queue_capacity, outbox_state.payload_slot_bytes)) {
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
