@@ -2,6 +2,16 @@
 
 All notable project changes are documented here.
 
+## 1.3.9 - 2026-07-30
+
+- Published immutable static Maven artifacts under `maven/` for `1.3.9` and restored `1.3.8` to its original artifact checksum.
+- Added Kotlin-side payload/category preflight so oversized writes are rejected before command-frame allocation or pipe handoff.
+- Included Kotlin-side preflight drops in `OutboxStats`.
+- Added consumer ProGuard rules to keep JNI entry points stable when apps minify dependencies.
+- Added CI coverage for host-native smoke and host-JNI integration, plus an append-only guard for published Maven version directories.
+- Documented single-reader doorbell fan-out expectations, provider cursor limits, and write handoff semantics.
+- Removed tracked `.idea` state and fixed Linux host C warning failures under `-Werror`.
+
 ## 1.3.8 - 2026-07-26
 
 - Added explicit `forceSync()` APIs for apps that choose an OS-level active-segment storage barrier.
