@@ -19,9 +19,10 @@ package io.github.phuongtran.androidoutbox
  * producers start dropping. This is a bounded native MPSC queue, not durable
  * storage. A higher value absorbs bursts better but increases native memory
  * reserved at startup.
- * @property maxRecordBytes Maximum payload bytes accepted for one record.
- * Records at or above this size are rejected before enqueueing. Callers should
- * keep payloads compact, sanitized, and single-line.
+ * @property maxRecordBytes Maximum UTF-8 payload bytes accepted for one record.
+ * Records at or above this size are rejected before Kotlin writes a command
+ * frame to native. Callers should keep payloads compact, sanitized, and
+ * single-line.
  * @property maxSegmentSizeBytes Maximum size of one spool segment before the
  * writer rolls to a new file. The disk budget is approximately
  * `maxSegmentSizeBytes * (maxArchivedSegments + 1)` because the active segment
@@ -68,6 +69,8 @@ data class OutboxConfig(
         const val DEFAULT_MAX_SEGMENT_SIZE_BYTES = 512L * 1024L
         const val DEFAULT_MAX_ARCHIVED_SEGMENTS = 3
         const val MAX_PIPE_FRAME_BYTES = Int.MAX_VALUE
+        const val MAX_CATEGORY_BYTES = 95
+        const val MAX_PROVIDER_CURSORS = 8
         private val PROVIDER_ID_REGEX = Regex("[A-Za-z0-9._-]{1,63}")
     }
 }

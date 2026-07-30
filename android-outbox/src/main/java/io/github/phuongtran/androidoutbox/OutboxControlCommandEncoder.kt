@@ -181,8 +181,20 @@ internal object OutboxControlCommandEncoder {
         category: String,
         payload: String,
     ): ByteBuffer {
-        val categoryBytes = category.toByteArray(Charsets.UTF_8)
-        val payloadBytes = payload.toByteArray(Charsets.UTF_8)
+        return write(
+            sequence = sequence,
+            level = level,
+            categoryBytes = category.toByteArray(Charsets.UTF_8),
+            payloadBytes = payload.toByteArray(Charsets.UTF_8),
+        )
+    }
+
+    fun write(
+        sequence: Long,
+        level: OutboxRecordLevel,
+        categoryBytes: ByteArray,
+        payloadBytes: ByteArray,
+    ): ByteBuffer {
         val commandPayload = ByteBuffer
             .allocate(
                 Int.SIZE_BYTES +

@@ -328,7 +328,7 @@ application.
 | `spoolDirectoryPath` | Required | App-private directory for spool segments and provider cursors. | If the directory cannot be created or opened, `start()` fails and the outbox stays stopped. |
 | `defaultProviderId` | `default` | Cursor id used when a caller does not pass an explicit provider id. | It must match the provider id format. Invalid ids are rejected by `OutboxConfig`. |
 | `queueCapacity` | `256` | Maximum number of records that may wait in native memory before the writer persists them. | When the queue is full, native may drop handed-off records and update pressure stats/doorbells. |
-| `maxRecordBytes` | `4096` | Maximum payload size for one record. | Oversized records are rejected before enqueueing. AndroidOutBox does not split or partially write a record. |
+| `maxRecordBytes` | `4096` | Maximum UTF-8 payload size for one record. | Payloads at or above the limit are rejected in Kotlin before a command frame is allocated or written to native. AndroidOutBox does not split or partially write a record. |
 | `maxSegmentSizeBytes` | `524288` | Approximate size at which the active spool segment rotates. | The writer rolls to a new segment instead of growing the active segment indefinitely. |
 | `maxArchivedSegments` | `3` | Number of rolled segments retained beside the active segment. | Oldest archived segments are deleted when the retained segment count exceeds the configured budget. |
 
@@ -349,6 +349,10 @@ are allocated according to `maxRecordBytes`.
 `maxRecordBytes` protects the outbox from becoming a raw payload dump. Keep
 records compact and sanitized. Prefer summaries, ids, error codes, paths, and
 small metadata over raw request or response bodies.
+
+Record categories are bounded to `OutboxConfig.MAX_CATEGORY_BYTES` UTF-8 bytes.
+Provider cursors are also bounded; the native spool keeps up to
+`OutboxConfig.MAX_PROVIDER_CURSORS` live provider cursors per started runtime.
 
 `maxSegmentSizeBytes` and `maxArchivedSegments` protect disk usage. Rotation
 creates new segments; retention cleanup removes old ones. Reading a batch does
@@ -575,6 +579,12 @@ posting a batch to the network. That should not create multiple drain jobs for
 the same provider. The durable source of truth is still the native/file outbox,
 and the cursor only advances after ACK.
 
+The default `BlockingOutboxDoorbellChannel` performs a blocking read from one
+native doorbell FD. If an app has multiple provider runners, use one coroutine
+to collect doorbells and fan out drain triggers to those runners. Do not collect
+the same blocking native doorbell channel from multiple coroutines as if it were
+a broadcast stream.
+
 Prefer this model:
 
 ```text
@@ -778,7 +788,7 @@ naturally.
 AndroidOutBox is intentionally bounded:
 
 - `queueCapacity` limits in-memory pressure
-- `maxRecordBytes` rejects oversized records
+- `maxRecordBytes` rejects oversized records before pipe/frame handoff
 - `maxSegmentSizeBytes` rolls spool segments
 - `maxArchivedSegments` caps retained files
 

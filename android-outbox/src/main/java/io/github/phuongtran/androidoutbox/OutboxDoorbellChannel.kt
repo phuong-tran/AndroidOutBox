@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.Flow
  *
  * The app layer owns the concrete blocking-read implementation so this core
  * contract does not expose fd, dispatcher, or native bridge details.
+ * Implementations backed by a native blocking reader should have one collector
+ * and fan out drain triggers above this interface when multiple sinks exist.
  */
 interface OutboxDoorbellChannel {
     fun events(): Flow<OutboxDoorbellEvent>

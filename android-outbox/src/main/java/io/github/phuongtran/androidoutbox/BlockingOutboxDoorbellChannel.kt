@@ -14,6 +14,10 @@ import kotlinx.coroutines.isActive
  * The native read is blocking, so the channel runs on [dispatcher]. Doorbells
  * are wake-up hints only; records must still be pulled through
  * [AndroidOutbox.readNextBatch].
+ *
+ * This channel owns one blocking doorbell reader. Share one collector-owned
+ * instance at the app orchestration layer and fan out drain triggers from
+ * there when multiple provider runners are active.
  */
 class BlockingOutboxDoorbellChannel(
     private val reader: OutboxDoorbellReader,

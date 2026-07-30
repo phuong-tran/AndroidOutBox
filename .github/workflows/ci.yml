@@ -56,6 +56,27 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
+      - name: Verify published artifacts are append-only
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          changed_existing_artifacts=""
+          while IFS= read -r path; do
+            if [[ "$path" =~ ^maven/.*/([0-9]+\.[0-9]+\.[0-9]+)/ ]]; then
+              version="${BASH_REMATCH[1]}"
+              version_dir="${path%%/${version}/*}/${version}"
+              if git cat-file -e "${base}:${version_dir}" 2>/dev/null; then
+                changed_existing_artifacts+="${path}"$'\n'
+              fi
+            fi
+          done < <(git diff --name-only "${base}...HEAD" -- 'maven/**')
+          if [ -n "$changed_existing_artifacts" ]; then
+            echo "Published Maven version directories are append-only."
+            echo "$changed_existing_artifacts"
+            exit 1
+          fi
+
       - name: Unit tests
         run: ./gradlew :android-outbox:testDebugUnitTest --console=plain
 

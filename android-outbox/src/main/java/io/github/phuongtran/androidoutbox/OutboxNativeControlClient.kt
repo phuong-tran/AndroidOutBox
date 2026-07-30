@@ -24,15 +24,25 @@ internal class OutboxNativeControlClient(
     @Volatile
     private var closed = false
 
+    @Volatile
+    private var maxRecordBytes = OutboxConfig.DEFAULT_MAX_RECORD_BYTES
+
+    private var locallyDroppedInvalidCount = 0L
+    private var locallyDroppedRecordTooLargeCount = 0L
+
     /**
      * Starts the native writer with bounded queue and spool limits.
      */
     fun configure(config: OutboxConfig): Boolean {
-        return sendCommandAndReadOk(
+        val configured = sendCommandAndReadOk(
             command = OutboxControlCommandEncoder.COMMAND_CONFIGURE,
         ) { sequence ->
             OutboxControlCommandEncoder.configure(sequence, config)
         }
+        if (configured) {
+            maxRecordBytes = config.maxRecordBytes
+        }
+        return configured
     }
 
     /**
@@ -48,6 +58,26 @@ internal class OutboxNativeControlClient(
         payload: String,
     ): Boolean {
         if (category.isBlank() || payload.isBlank()) {
+            recordLocalInvalidDrop()
+            return false
+        }
+        val configuredMaxRecordBytes = maxRecordBytes
+        if (payload.length >= configuredMaxRecordBytes) {
+            recordLocalTooLargeDrop()
+            return false
+        }
+        if (category.length > OutboxConfig.MAX_CATEGORY_BYTES) {
+            recordLocalInvalidDrop()
+            return false
+        }
+        val categoryBytes = category.toByteArray(Charsets.UTF_8)
+        if (categoryBytes.size > OutboxConfig.MAX_CATEGORY_BYTES) {
+            recordLocalInvalidDrop()
+            return false
+        }
+        val payloadBytes = payload.toByteArray(Charsets.UTF_8)
+        if (payloadBytes.size >= configuredMaxRecordBytes) {
+            recordLocalTooLargeDrop()
             return false
         }
         return synchronized(commandLock) {
@@ -58,8 +88,8 @@ internal class OutboxNativeControlClient(
             OutboxControlCommandEncoder.write(
                 sequence = sequence,
                 level = level,
-                category = category,
-                payload = payload,
+                categoryBytes = categoryBytes,
+                payloadBytes = payloadBytes,
             ).let(transport::writeCommandEnvelope)
         }
     }
@@ -119,7 +149,7 @@ internal class OutboxNativeControlClient(
             if (!response.isOk) {
                 return@synchronized OutboxStats()
             }
-            response.body.toOutboxStats()
+            response.body.toOutboxStats().plusLocalDrops()
         }
     }
 
@@ -267,6 +297,18 @@ internal class OutboxNativeControlClient(
         return sequence
     }
 
+    private fun recordLocalInvalidDrop() {
+        synchronized(commandLock) {
+            locallyDroppedInvalidCount += 1L
+        }
+    }
+
+    private fun recordLocalTooLargeDrop() {
+        synchronized(commandLock) {
+            locallyDroppedRecordTooLargeCount += 1L
+        }
+    }
+
     private fun ByteArray.toOutboxStats(): OutboxStats {
         if (size < STATS_BODY_BYTES) {
             return OutboxStats()
@@ -286,6 +328,14 @@ internal class OutboxNativeControlClient(
             writeFailureCount = buffer.long,
             currentFileSizeBytes = buffer.long,
             rollCount = buffer.long,
+        )
+    }
+
+    private fun OutboxStats.plusLocalDrops(): OutboxStats {
+        return copy(
+            droppedInvalidCount = droppedInvalidCount + locallyDroppedInvalidCount,
+            droppedRecordTooLargeCount =
+                droppedRecordTooLargeCount + locallyDroppedRecordTooLargeCount,
         )
     }
 

@@ -3,7 +3,7 @@
   "component": {
     "group": "io.github.phuongtran",
     "module": "android-outbox",
-    "version": "1.3.8",
+    "version": "1.3.9",
     "attributes": {
       "org.gradle.status": "release"
     }
@@ -40,13 +40,13 @@
       ],
       "files": [
         {
-          "name": "android-outbox-1.3.8.aar",
-          "url": "android-outbox-1.3.8.aar",
-          "size": 147595,
-          "sha512": "f7fba1011ff839e2d575ba79c778ae676b4eba117a57b42cbcd18993e6f4a1227909c8c2bfdf40f3d6a396d263a7891d8b0e4c58e10fad5fd0ac6aa10aa7651e",
-          "sha256": "0d875a0a5e5304182ce532173740fa1847c711d53bfa7673614ec7dba1a265ce",
-          "sha1": "14dc516637b3bc8e34d852e6b190df290ab2dfcd",
-          "md5": "955e903461bcd2622a2a70117d75d727"
+          "name": "android-outbox-1.3.9.aar",
+          "url": "android-outbox-1.3.9.aar",
+          "size": 148694,
+          "sha512": "5b79366f5e9f6128c2955f009a21a8569b2c805029b3b6e9daa1afcb23df2366658dab5c959510bf8ad752aa1dbfb9fccce19ca28b932b4c817b651ad9ef9b5e",
+          "sha256": "cc1850188ff588e682aa9daa9454d6b5f38c685b4013cf34048b7765c4abe54a",
+          "sha1": "df8b899709345e6c461b264e834e4acbeb69fa59",
+          "md5": "c668095f88643adae193ded954329e86"
         }
       ]
     },
@@ -76,13 +76,13 @@
       ],
       "files": [
         {
-          "name": "android-outbox-1.3.8.aar",
-          "url": "android-outbox-1.3.8.aar",
-          "size": 147595,
-          "sha512": "f7fba1011ff839e2d575ba79c778ae676b4eba117a57b42cbcd18993e6f4a1227909c8c2bfdf40f3d6a396d263a7891d8b0e4c58e10fad5fd0ac6aa10aa7651e",
-          "sha256": "0d875a0a5e5304182ce532173740fa1847c711d53bfa7673614ec7dba1a265ce",
-          "sha1": "14dc516637b3bc8e34d852e6b190df290ab2dfcd",
-          "md5": "955e903461bcd2622a2a70117d75d727"
+          "name": "android-outbox-1.3.9.aar",
+          "url": "android-outbox-1.3.9.aar",
+          "size": 148694,
+          "sha512": "5b79366f5e9f6128c2955f009a21a8569b2c805029b3b6e9daa1afcb23df2366658dab5c959510bf8ad752aa1dbfb9fccce19ca28b932b4c817b651ad9ef9b5e",
+          "sha256": "cc1850188ff588e682aa9daa9454d6b5f38c685b4013cf34048b7765c4abe54a",
+          "sha1": "df8b899709345e6c461b264e834e4acbeb69fa59",
+          "md5": "c668095f88643adae193ded954329e86"
         }
       ]
     },
@@ -96,13 +96,13 @@
       },
       "files": [
         {
-          "name": "android-outbox-1.3.8-sources.jar",
-          "url": "android-outbox-1.3.8-sources.jar",
-          "size": 24013,
-          "sha512": "be45a5f5d1bf7873ea7a56afdc8100e2be215f47e7539349b6a75933f3f434dc9b123f69890d81b76015e399dc5ea0092c2814f1dc9b1cd874e49eb9d7e32c7b",
-          "sha256": "a69993c90b8d2c3fcfbfd801e24d6dd89bce7659243a264151de815f49ec1c2c",
-          "sha1": "c03ae8ebf22af962f96466d5c943e14975cafd34",
-          "md5": "21a70d6d8aa27eb51377fcbdffac5968"
+          "name": "android-outbox-1.3.9-sources.jar",
+          "url": "android-outbox-1.3.9-sources.jar",
+          "size": 24701,
+          "sha512": "cf8e0f475b6a3936a2ecfa4cc9686eb65d5449ff0e8640fa80c4d6abbd88f2bfd7bbdfab0b2d97a517cf83d9110e8f7255886d1245f09238a265df9b105318a7",
+          "sha256": "dfc078112ebab6a5ccf6e517087de6fe75cc7bb6bdee10a4d2b3946762c90678",
+          "sha1": "49ee1b7f0744694c55b1fddfa5d7463325446d62",
+          "md5": "f036b3bfbcb08f7a2b9507a0c199c802"
         }
       ]
     }

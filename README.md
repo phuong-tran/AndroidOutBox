@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml/badge.svg)](https://github.com/phuong-tran/AndroidOutBox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.8-blue.svg)](#installation)
+[![Version](https://img.shields.io/badge/version-1.3.9-blue.svg)](#installation)
 
 AndroidOutBox is a small Android native-backed outbox for app-owned logs and
 events.
@@ -92,7 +92,7 @@ dependencyResolutionManagement {
 Then add the dependency:
 
 ```kotlin
-implementation("io.github.phuongtran:android-outbox:1.3.8")
+implementation("io.github.phuongtran:android-outbox:1.3.9")
 ```
 
 The AAR includes the Kotlin API and the native `libandroid_outbox.so` binaries
@@ -144,6 +144,10 @@ memory-pressure hooks.
 does not wait for native queue acceptance or disk persistence; watch
 `getStats()` and doorbells for queue pressure and drops.
 
+Payloads whose UTF-8 size reaches `maxRecordBytes` are rejected on the Kotlin
+side before a command frame is allocated or written to the pipe. Categories are
+bounded to `OutboxConfig.MAX_CATEGORY_BYTES` UTF-8 bytes.
+
 The `64 * 1024` value above is only a default batch pull budget. Pipe frames are
 length-prefixed and read to completion; oversized records are rejected at the
 write/config boundary instead of by a 64 KiB pipe ceiling.
@@ -169,6 +173,10 @@ scope.launch {
 Do not run multiple batch readers for the same provider id. The runner keeps
 one ordered drain path so `readNextBatch -> send -> ack` preserves cursor
 semantics.
+
+When multiple provider runners are active, have one coroutine collect the
+blocking doorbell channel and fan out drain triggers. Doorbells are hints over
+one native FD, not a broadcast stream per sink.
 
 `write()` is intended for concurrent callers. Batch reads and ACKs are
 serialized by the default client, but application code should still keep one
