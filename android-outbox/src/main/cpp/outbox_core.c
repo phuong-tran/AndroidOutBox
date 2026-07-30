@@ -74,6 +74,10 @@ static size_t align_up_size(size_t value, size_t alignment) {
   return remainder == 0u ? value : value + alignment - remainder;
 }
 
+static int size_multiply_overflows(size_t count, size_t item_size) {
+  return item_size != 0u && count > SIZE_MAX / item_size;
+}
+
 static void* zalloc_cacheline_aligned(size_t size) {
   void* data = NULL;
   if (size == 0u || posix_memalign(&data, OUTBOX_CACHELINE, size) != 0) {
@@ -371,8 +375,8 @@ outbox_status_t outbox_start(
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
-  if ((size_t)queue_capacity > SIZE_MAX / sizeof(*outbox_state.slots) ||
-      (size_t)queue_capacity > SIZE_MAX / OUTBOX_CATEGORY_SLOT_BYTES) {
+  if (size_multiply_overflows((size_t)queue_capacity, sizeof(*outbox_state.slots)) ||
+      size_multiply_overflows((size_t)queue_capacity, OUTBOX_CATEGORY_SLOT_BYTES)) {
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
