@@ -1,6 +1,7 @@
 def hostTestBuildDir = layout.buildDirectory.dir("nativeHostTest")
 def hostTestBinary = hostTestBuildDir.map { it.file("outbox_core_test").asFile }
 def hostStressTestBinary = hostTestBuildDir.map { it.file("outbox_core_stress_test").asFile }
+def hostSanitizerBuildDir = layout.buildDirectory.dir("nativeHostSanitizerTest")
 def isWindowsHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("windows")
 def isMacHost = System.getProperty("os.name").toLowerCase(Locale.US).contains("mac")
 def hostCompiler = providers.environmentVariable("CC").orElse("cc").get()
@@ -114,6 +115,217 @@ def nativeHostJniCxxCompilerArgs = [
         "-I${jniIncludeDir}",
         "-I${jniPlatformIncludeDir}",
 ]
+
+def sanitizerSpecs = [
+        asan : [
+                displayName : "AddressSanitizer (ASan)",
+                taskSuffix  : "Asan",
+                compilerArgs: [
+                        "-O1",
+                        "-g",
+                        "-fno-omit-frame-pointer",
+                        "-fno-optimize-sibling-calls",
+                        "-fsanitize=address",
+                ],
+                environment : [
+                        ASAN_OPTIONS: isMacHost
+                                ? "halt_on_error=1:abort_on_error=1:symbolize=1"
+                                : "detect_leaks=1:halt_on_error=1:abort_on_error=1:symbolize=1",
+                ],
+                probeSource : """
+                        #include <stdlib.h>
+                        __attribute__((noinline)) static int read_value(int *value) { return *value; }
+                        int main(void) {
+                          int *value = (int *)malloc(sizeof(*value));
+                          if (value == NULL) return 2;
+                          *value = 7;
+                          free(value);
+                          return read_value(value);
+                        }
+                        """.stripIndent(),
+                probeMarker : "ERROR: AddressSanitizer",
+        ],
+        ubsan: [
+                displayName : "UndefinedBehaviorSanitizer (UBSan)",
+                taskSuffix  : "Ubsan",
+                compilerArgs: [
+                        "-O1",
+                        "-g",
+                        "-fno-omit-frame-pointer",
+                        "-fsanitize=undefined",
+                        "-fno-sanitize-recover=undefined",
+                ],
+                environment : [
+                        UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1",
+                ],
+                probeSource : """
+                        #include <limits.h>
+                        __attribute__((noinline)) static int add_one(int value) { return value + 1; }
+                        int main(void) {
+                          volatile int value = INT_MAX;
+                          return add_one(value);
+                        }
+                        """.stripIndent(),
+                probeMarker : "runtime error:",
+        ],
+]
+
+def sanitizerInstallHelp = { Map spec ->
+    def retryCommand = "./gradlew :android-outbox:testNativeHost${spec.taskSuffix} --console=plain"
+    if (isWindowsHost) {
+        return [
+                "The host-native test uses POSIX APIs and does not run directly on Windows.",
+                "Install WSL 2 with Ubuntu, then inside WSL run:",
+                "  sudo apt update && sudo apt install build-essential clang",
+                "  CC=clang ${retryCommand}",
+        ].join(System.lineSeparator())
+    }
+    if (isMacHost) {
+        return [
+                "Install Apple's compiler tools, then retry:",
+                "  xcode-select --install",
+                "  CC=clang ${retryCommand}",
+                "If Apple Clang is installed but its sanitizer runtime is unavailable, install Homebrew LLVM:",
+                "  brew install llvm",
+                "  CC=\"\$(brew --prefix llvm)/bin/clang\" ${retryCommand}",
+        ].join(System.lineSeparator())
+    }
+    return [
+            "Install a compiler and sanitizer runtime, then retry:",
+            "  Debian/Ubuntu: sudo apt update && sudo apt install build-essential clang",
+            "  Fedora:        sudo dnf install gcc clang compiler-rt libasan libubsan",
+            "  Arch Linux:    sudo pacman -S base-devel clang compiler-rt",
+            "  CC=clang ${retryCommand}",
+    ].join(System.lineSeparator())
+}
+
+def sanitizerProbeFailure = { String sanitizerId, Map spec ->
+    if (isWindowsHost) {
+        return "Unsupported host operating system: ${System.getProperty("os.name")}"
+    }
+
+    def probeDir = hostSanitizerBuildDir.get().dir("${sanitizerId}Probe").asFile
+    def probeSource = new File(probeDir, "probe.c")
+    def probeBinary = new File(probeDir, "probe")
+    probeDir.mkdirs()
+    if (probeBinary.exists() && !probeBinary.delete()) {
+        return "Cannot remove stale sanitizer probe binary: ${probeBinary.absolutePath}"
+    }
+    probeSource.setText(spec.probeSource, "UTF-8")
+
+    def compileCommand = [hostCompiler] +
+            spec.compilerArgs +
+            [probeSource.absolutePath, "-o", probeBinary.absolutePath]
+    try {
+        def compileProcess = new ProcessBuilder(compileCommand.collect { it.toString() })
+                .redirectErrorStream(true)
+                .start()
+        def compileOutput = compileProcess.inputStream.getText("UTF-8").trim()
+        def compileExitCode = compileProcess.waitFor()
+        if (compileExitCode != 0) {
+            return "Compiler '${hostCompiler}' rejected ${spec.displayName} " +
+                    "(exit ${compileExitCode})." +
+                    (compileOutput.isEmpty() ? "" : "\nCompiler output:\n${compileOutput}")
+        }
+        if (!probeBinary.isFile()) {
+            return "Compiler '${hostCompiler}' reported success but did not create the " +
+                    "${spec.displayName} probe binary."
+        }
+    } catch (IOException exception) {
+        return "Cannot start host C compiler '${hostCompiler}': ${exception.message}"
+    }
+
+    try {
+        def runProcessBuilder = new ProcessBuilder(probeBinary.absolutePath)
+                .redirectErrorStream(true)
+        spec.environment.each { key, value ->
+            runProcessBuilder.environment().put(key.toString(), value.toString())
+        }
+        def runProcess = runProcessBuilder.start()
+        def runOutput = runProcess.inputStream.getText("UTF-8").trim()
+        def runExitCode = runProcess.waitFor()
+        if (runExitCode == 0) {
+            return "The compiler accepted the ${spec.displayName} flags, but the runtime did not " +
+                    "detect the probe's intentional validation fault."
+        }
+        if (!runOutput.contains(spec.probeMarker)) {
+            return "The ${spec.displayName} probe exited with code ${runExitCode} without the " +
+                    "expected sanitizer diagnostic. The runtime may be missing or incompatible." +
+                    (runOutput.isEmpty() ? "" : "\nProbe output:\n${runOutput}")
+        }
+    } catch (IOException exception) {
+        return "The ${spec.displayName} probe compiled but could not start. " +
+                "The sanitizer runtime may be missing or incompatible: ${exception.message}"
+    }
+
+    return null
+}
+
+sanitizerSpecs.each { sanitizerId, spec ->
+    def verifyTaskName = "verifyNativeHost${spec.taskSuffix}Support"
+    def compileTaskName = "compileNativeHost${spec.taskSuffix}Test"
+    def testTaskName = "testNativeHost${spec.taskSuffix}"
+    def sanitizerBinary = hostSanitizerBuildDir.map {
+        it.file("outbox_core_test_${sanitizerId}").asFile
+    }
+
+    tasks.register(verifyTaskName) {
+        group = "verification"
+        description = "Checks that the host can compile and run ${spec.displayName} binaries."
+
+        doLast {
+            def failure = sanitizerProbeFailure(sanitizerId, spec)
+            if (failure != null) {
+                throw new GradleException(
+                        "Cannot run ${spec.displayName} host tests.\n" +
+                                "Reason: ${failure}\n\n" +
+                                sanitizerInstallHelp(spec),
+                )
+            }
+        }
+    }
+
+    tasks.register(compileTaskName, Exec) {
+        group = "verification"
+        description = "Compiles the host-native C test with ${spec.displayName}."
+        dependsOn(verifyTaskName)
+
+        inputs.files(nativeMainSources, nativeMainHeaders, file("src/hostTest/c/outbox_core_test.c"))
+        inputs.property("hostCompiler", hostCompiler)
+        inputs.property("sanitizerCompilerArgs", spec.compilerArgs.join(" "))
+        outputs.file(sanitizerBinary)
+
+        doFirst {
+            hostSanitizerBuildDir.get().asFile.mkdirs()
+        }
+        commandLine(
+                [hostCompiler] +
+                        nativeHostCompilerArgs +
+                        spec.compilerArgs +
+                        nativeMainSources.collect { it.absolutePath } +
+                        [
+                                file("src/hostTest/c/outbox_core_test.c").absolutePath,
+                                "-o",
+                                sanitizerBinary.get().absolutePath,
+                        ],
+        )
+    }
+
+    tasks.register(testTaskName, Exec) {
+        group = "verification"
+        description = "Runs host-native C tests with ${spec.displayName}."
+        dependsOn(compileTaskName)
+
+        environment(spec.environment)
+        commandLine(sanitizerBinary.get().absolutePath)
+    }
+}
+
+tasks.register("testNativeHostSanitizers") {
+    group = "verification"
+    description = "Runs host-native C tests independently with ASan and UBSan."
+    dependsOn("testNativeHostAsan", "testNativeHostUbsan")
+}
 
 tasks.register("compileNativeHostTest", Exec) {
     group = "verification"

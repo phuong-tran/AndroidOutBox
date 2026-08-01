@@ -85,6 +85,9 @@ jobs:
           ./gradlew -q :android-outbox:testNativeHost \
             -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
 
+      - name: Host-native ASan and UBSan
+        run: ./gradlew :android-outbox:testNativeHostSanitizers --console=plain
+
       - name: Host-JNI integration
         run: |
           ./gradlew :android-outbox:testDebugUnitTest \

@@ -249,9 +249,10 @@ Run lint and build the release AAR:
 ./gradlew :android-outbox:lintRelease :android-outbox:assembleRelease --console=plain
 ```
 
-Native smoke, stress, host JNI, and shutdown race diagnostics are documented in
-[docs/testing.md](docs/testing.md). They stay opt-in so the normal developer
-and CI loop remains small.
+Native smoke, ASan/UBSan, stress, host JNI, and shutdown race diagnostics are
+documented in [docs/testing.md](docs/testing.md). Explicit local tasks keep the
+normal developer loop small; CI runs the smoke, host JNI, ASan, and UBSan
+coverage automatically.
 
 ## Build
 

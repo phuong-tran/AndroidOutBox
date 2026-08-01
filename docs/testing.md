@@ -1,9 +1,10 @@
 # AndroidOutBox Testing
 
-AndroidOutBox keeps the normal feedback loop small. Regular Kotlin tests,
-Android lint, and release assembly are the default checks. Native smoke,
-stress, JNI integration, and shutdown race diagnostics are opt-in because they
-exercise lower-level runtime behavior and can be more host-dependent.
+AndroidOutBox keeps the normal local feedback loop small. Regular Kotlin tests,
+Android lint, and release assembly are the default local checks. Lower-level
+native diagnostics use explicit tasks because they are more host-dependent; CI
+runs smoke, JNI integration, ASan, and UBSan, while stress and shutdown-race
+diagnostics remain opt-in.
 
 ## Regular Checks
 
@@ -49,6 +50,36 @@ For clean JSON output:
 ./gradlew -q :android-outbox:testNativeHost \
   -PandroidOutboxHostNative=true | sed -n '/^{/,$p'
 ```
+
+## Host Sanitizers
+
+Run the native smoke suite in two separate instrumented binaries: one with
+AddressSanitizer (ASan) and one with UndefinedBehaviorSanitizer (UBSan).
+
+```bash
+./gradlew :android-outbox:testNativeHostSanitizers --console=plain
+```
+
+Run either sanitizer independently when diagnosing a failure:
+
+```bash
+./gradlew :android-outbox:testNativeHostAsan --console=plain
+./gradlew :android-outbox:testNativeHostUbsan --console=plain
+```
+
+ASan stops on memory-safety errors and enables leak detection on Linux. UBSan
+stops on the first detected undefined behavior. Both tasks first compile and
+execute a small validation probe with an intentional fault, confirming that the
+expected sanitizer catches it. If the compiler, sanitizer support, or runtime
+is missing, the task fails with the detected reason and platform-specific
+install commands instead of being silently skipped. Set `CC` to select another
+host C compiler, for example:
+
+```bash
+CC=clang ./gradlew :android-outbox:testNativeHostSanitizers --console=plain
+```
+
+The host suite uses POSIX APIs. Windows users should run it inside WSL 2.
 
 ## Host JNI Integration
 
@@ -103,6 +134,7 @@ Useful knobs:
 
 ## CI Policy
 
-CI runs regular checks automatically. Native diagnostics remain manual so
-ordinary changes do not pay for stress or host-specific race tests. Use the
-GitHub Actions manual workflow when you want host-native diagnostics from CI.
+CI runs regular checks, the host-native smoke test, host JNI integration, and
+both host sanitizers automatically. Stress and shutdown-race diagnostics remain
+manual because they are substantially heavier or more host-specific. Use the
+GitHub Actions manual workflow when you want those additional diagnostics.

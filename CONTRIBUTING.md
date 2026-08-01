@@ -23,13 +23,15 @@ Run the normal feedback loop before opening a PR:
 ./gradlew :android-outbox:assembleRelease --console=plain
 ```
 
-Host-native diagnostics are manual-only and should be run when changing native
-queue, file, cursor, frame, pipe, lifecycle, or ACK behavior:
+Run the host-native diagnostics locally when changing native queue, file,
+cursor, frame, pipe, lifecycle, or ACK behavior:
 
 ```bash
 ./gradlew :android-outbox:testNativeHost \
   -PandroidOutboxHostNative=true \
   --console=plain
+
+./gradlew :android-outbox:testNativeHostSanitizers --console=plain
 
 ./gradlew :android-outbox:testDebugUnitTest \
   --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \
