@@ -39,8 +39,14 @@ abstract class AndroidOutboxSinkRunner(
         require(maxRecords > 0) {
             "maxRecords must be greater than zero"
         }
+        require(maxRecords <= OutboxRecordStore.MAX_BATCH_RECORDS) {
+            "maxRecords must not exceed ${OutboxRecordStore.MAX_BATCH_RECORDS}"
+        }
         require(maxBytes > 0) {
             "maxBytes must be greater than zero"
+        }
+        require(maxBytes <= OutboxRecordStore.MAX_BATCH_BYTES) {
+            "maxBytes must not exceed ${OutboxRecordStore.MAX_BATCH_BYTES}"
         }
         require(maxBatchesPerDrain > 0) {
             "maxBatchesPerDrain must be greater than zero"

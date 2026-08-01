@@ -232,6 +232,15 @@ static outbox_status_t decode_control_command_frame(
   return OUTBOX_STATUS_OK;
 }
 
+#if defined(OUTBOX_TESTING)
+outbox_status_t outbox_control_validate_command_frame(
+    const uint8_t* frame,
+    uint32_t frame_length) {
+  outbox_control_command_frame_t command = {};
+  return decode_control_command_frame(frame, frame_length, &command);
+}
+#endif
+
 static outbox_status_t apply_configure_payload(
     const uint8_t* payload,
     uint32_t payload_length) {

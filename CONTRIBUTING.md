@@ -31,7 +31,7 @@ cursor, frame, pipe, lifecycle, or ACK behavior:
   -PandroidOutboxHostNative=true \
   --console=plain
 
-./gradlew :android-outbox:testNativeHostSanitizers --console=plain
+./gradlew :android-outbox:testNativeHostAllSanitizers --console=plain
 
 ./gradlew :android-outbox:testDebugUnitTest \
   --tests "io.github.phuongtran.androidoutbox.OutboxHostJniIntegrationTest" \

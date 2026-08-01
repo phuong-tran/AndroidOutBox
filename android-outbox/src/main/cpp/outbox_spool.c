@@ -13,6 +13,29 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(OUTBOX_TESTING)
+static _Atomic uint32_t outbox_test_next_spool_fault = 0u;
+
+void outbox_test_fail_next_spool_operation(outbox_test_spool_fault_t fault) {
+  atomic_store_explicit(&outbox_test_next_spool_fault,
+                        (uint32_t)fault,
+                        memory_order_release);
+}
+
+static int consume_test_spool_fault(outbox_test_spool_fault_t fault) {
+  uint32_t expected = (uint32_t)fault;
+  return atomic_compare_exchange_strong_explicit(&outbox_test_next_spool_fault,
+                                                  &expected,
+                                                  0u,
+                                                  memory_order_acq_rel,
+                                                  memory_order_acquire)
+             ? 1
+             : 0;
+}
+#else
+#define consume_test_spool_fault(fault) 0
+#endif
+
 uint64_t outbox_spool_file_size_bytes(const char* path) {
   struct stat stat_buffer;
   if (path == NULL || stat(path, &stat_buffer) != 0) {
@@ -24,6 +47,10 @@ uint64_t outbox_spool_file_size_bytes(const char* path) {
 int outbox_spool_fsync_fd(int fd) {
   int rc = 0;
   if (fd < 0) {
+    return 0;
+  }
+  if (consume_test_spool_fault(OUTBOX_TEST_FAULT_FSYNC)) {
+    errno = EIO;
     return 0;
   }
   do {
@@ -141,7 +168,7 @@ static int segment_file_name(uint64_t segment_id, char* buffer, size_t buffer_ca
 }
 
 size_t outbox_spool_line_buffer_capacity(uint32_t max_record_bytes) {
-  return (size_t)max_record_bytes + (size_t)OUTBOX_CATEGORY_CAPACITY + 192u;
+  return (size_t)max_record_bytes + OUTBOX_MAX_SPOOL_RECORD_OVERHEAD_BYTES;
 }
 
 static int parse_segment_id(const char* file_name, uint64_t* out_segment_id) {
@@ -271,15 +298,22 @@ static int persist_cursor_position_locked(const outbox_provider_cursor_t* cursor
   }
   snprintf(temporary_path, (size_t)required + 1u, "%s.tmp", cursor->cursor_file_path);
 
-  fd = open(temporary_path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+  if (consume_test_spool_fault(OUTBOX_TEST_FAULT_CURSOR_OPEN)) {
+    errno = EIO;
+  } else {
+    fd = open(temporary_path, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+  }
   if (fd >= 0 &&
       outbox_write_all_bytes(fd, token, strlen(token)) &&
       outbox_write_all_bytes(fd, "\n", 1u) &&
+      !consume_test_spool_fault(OUTBOX_TEST_FAULT_CURSOR_FSYNC) &&
       outbox_spool_fsync_fd(fd)) {
     close_result = close(fd);
     fd = -1;
     if (close_result == 0 &&
+        !consume_test_spool_fault(OUTBOX_TEST_FAULT_CURSOR_RENAME) &&
         rename(temporary_path, cursor->cursor_file_path) == 0 &&
+        !consume_test_spool_fault(OUTBOX_TEST_FAULT_CURSOR_DIRECTORY_SYNC) &&
         sync_parent_directory_path(cursor->cursor_file_path)) {
       ok = 1;
     }
@@ -568,7 +602,11 @@ int outbox_spool_rotate_active_segment_locked(
   if (next_path == NULL) {
     return 0;
   }
-  next_fd = outbox_spool_open_segment_append_fd(next_path);
+  if (consume_test_spool_fault(OUTBOX_TEST_FAULT_SEGMENT_ROTATE_OPEN)) {
+    errno = EIO;
+  } else {
+    next_fd = outbox_spool_open_segment_append_fd(next_path);
+  }
   if (next_fd < 0) {
     free(next_path);
     return 0;
@@ -602,7 +640,8 @@ outbox_status_t outbox_read_next_batch(
   /* readNextBatch is a peek, not a commit. It starts from the persisted ack
    * cursor and returns an ack token for the byte after the last returned line.
    * Only `ack(token)` advances durable delivery state. */
-  if (out_batch == NULL || provider_id == NULL || max_records == 0u || max_bytes == 0u) {
+  if (out_batch == NULL || provider_id == NULL || max_records == 0u || max_bytes == 0u ||
+      max_records > OUTBOX_MAX_BATCH_RECORDS || max_bytes > OUTBOX_MAX_BATCH_BYTES) {
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
   memset(out_batch, 0, sizeof(*out_batch));

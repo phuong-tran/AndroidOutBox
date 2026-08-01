@@ -3,6 +3,7 @@ package io.github.phuongtran.androidoutbox
 import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Serializes Kotlin-owned control commands over the native pipe transport.
@@ -19,7 +20,7 @@ internal class OutboxNativeControlClient(
     private val transport: OutboxPipeTransport,
 ) : Closeable {
     private val commandLock = Any()
-    private var controlSequence = 1L
+    private val controlSequence = AtomicLong(1L)
 
     @Volatile
     private var closed = false
@@ -27,8 +28,8 @@ internal class OutboxNativeControlClient(
     @Volatile
     private var maxRecordBytes = OutboxConfig.DEFAULT_MAX_RECORD_BYTES
 
-    private var locallyDroppedInvalidCount = 0L
-    private var locallyDroppedRecordTooLargeCount = 0L
+    private val locallyDroppedInvalidCount = AtomicLong(0L)
+    private val locallyDroppedRecordTooLargeCount = AtomicLong(0L)
 
     /**
      * Starts the native writer with bounded queue and spool limits.
@@ -46,11 +47,11 @@ internal class OutboxNativeControlClient(
     }
 
     /**
-     * Sends one record to native without waiting for an enqueue response.
+     * Sends one record without waiting for a native response.
      *
-     * A true result means Kotlin handed a complete frame to the native command
-     * pipe. Native still owns bounded enqueue, persistence, and drop accounting.
-     * This keeps writing off the command/response round trip.
+     * Record frames share the ordered pipe transport but not [commandLock]. A
+     * batch read, ACK, flush, or other request may wait for a response without
+     * blocking a producer from handing its one-way frame to native.
      */
     fun write(
         level: OutboxRecordLevel,
@@ -80,18 +81,16 @@ internal class OutboxNativeControlClient(
             recordLocalTooLargeDrop()
             return false
         }
-        return synchronized(commandLock) {
-            if (closed) {
-                return@synchronized false
-            }
-            val sequence = nextControlSequence()
-            OutboxControlCommandEncoder.write(
-                sequence = sequence,
-                level = level,
-                categoryBytes = categoryBytes,
-                payloadBytes = payloadBytes,
-            ).let(transport::writeCommandEnvelope)
+        if (closed) {
+            return false
         }
+        val sequence = nextControlSequence()
+        return OutboxControlCommandEncoder.write(
+            sequence = sequence,
+            level = level,
+            categoryBytes = categoryBytes,
+            payloadBytes = payloadBytes,
+        ).let(transport::writeCommandEnvelope)
     }
 
     /**
@@ -185,7 +184,9 @@ internal class OutboxNativeControlClient(
         if (
             providerId.isBlank() ||
             maxRecords <= 0 ||
-            maxBytes <= 0
+            maxRecords > OutboxRecordStore.MAX_BATCH_RECORDS ||
+            maxBytes <= 0 ||
+            maxBytes > OutboxRecordStore.MAX_BATCH_BYTES
         ) {
             return null
         }
@@ -292,21 +293,15 @@ internal class OutboxNativeControlClient(
     }
 
     private fun nextControlSequence(): Long {
-        val sequence = controlSequence
-        controlSequence += 1L
-        return sequence
+        return controlSequence.getAndIncrement()
     }
 
     private fun recordLocalInvalidDrop() {
-        synchronized(commandLock) {
-            locallyDroppedInvalidCount += 1L
-        }
+        locallyDroppedInvalidCount.incrementAndGet()
     }
 
     private fun recordLocalTooLargeDrop() {
-        synchronized(commandLock) {
-            locallyDroppedRecordTooLargeCount += 1L
-        }
+        locallyDroppedRecordTooLargeCount.incrementAndGet()
     }
 
     private fun ByteArray.toOutboxStats(): OutboxStats {
@@ -333,9 +328,9 @@ internal class OutboxNativeControlClient(
 
     private fun OutboxStats.plusLocalDrops(): OutboxStats {
         return copy(
-            droppedInvalidCount = droppedInvalidCount + locallyDroppedInvalidCount,
+            droppedInvalidCount = droppedInvalidCount + locallyDroppedInvalidCount.get(),
             droppedRecordTooLargeCount =
-                droppedRecordTooLargeCount + locallyDroppedRecordTooLargeCount,
+                droppedRecordTooLargeCount + locallyDroppedRecordTooLargeCount.get(),
         )
     }
 

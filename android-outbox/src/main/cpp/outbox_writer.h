@@ -9,6 +9,10 @@ extern "C" {
 
 void* outbox_writer_main(void* opaque);
 
+#if defined(OUTBOX_TESTING)
+void outbox_test_fail_next_record_append(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

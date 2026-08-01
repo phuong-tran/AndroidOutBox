@@ -2,10 +2,15 @@ package io.github.phuongtran.androidoutbox
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class OutboxNativeControlClientTest {
     @Test
@@ -122,6 +127,63 @@ class OutboxNativeControlClientTest {
         assertEquals(2, transport.writtenCommandCount)
     }
 
+    @Test(timeout = 5_000L)
+    fun `one-way record frame does not wait behind a blocking control response`() {
+        val transport = BlockingControlTransport()
+        val client = OutboxNativeControlClient(transport)
+        assertTrue(client.configure(config(maxRecordBytes = 4 * 1024)))
+
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val flush = executor.submit<Boolean> { client.flush() }
+            assertTrue(transport.blockingReadStarted.await(1, TimeUnit.SECONDS))
+
+            val write = executor.submit<Boolean> {
+                client.write(
+                    level = OutboxRecordLevel.ERROR,
+                    category = "network.failure",
+                    payload = "control lane is blocked",
+                )
+            }
+            assertTrue(write.get(1, TimeUnit.SECONDS))
+            assertEquals(3, transport.writtenCommandCount.get())
+
+            transport.releaseBlockingRead.countDown()
+            assertTrue(flush.get(1, TimeUnit.SECONDS))
+        } finally {
+            transport.releaseBlockingRead.countDown()
+            executor.shutdownNow()
+            client.close()
+        }
+    }
+
+    @Test
+    fun `rejects batch request above allocation limits before writing command`() {
+        val transport = RecordingTransport()
+        transport.enqueueOk(
+            sequence = 1L,
+            command = OutboxControlCommandEncoder.COMMAND_CONFIGURE,
+        )
+        val client = OutboxNativeControlClient(transport)
+        assertTrue(client.configure(config(maxRecordBytes = 4 * 1024)))
+
+        assertNull(
+            client.readNextBatch(
+                providerId = "primary",
+                maxRecords = OutboxRecordStore.MAX_BATCH_RECORDS + 1,
+                maxBytes = OutboxRecordStore.DEFAULT_MAX_BYTES,
+            ),
+        )
+        assertNull(
+            client.readNextBatch(
+                providerId = "primary",
+                maxRecords = OutboxRecordStore.DEFAULT_MAX_RECORDS,
+                maxBytes = OutboxRecordStore.MAX_BATCH_BYTES + 1,
+            ),
+        )
+        assertEquals(1, transport.writtenCommandCount)
+    }
+
     private fun config(maxRecordBytes: Int): OutboxConfig {
         return OutboxConfig(
             spoolDirectoryPath = "memory://client-test",
@@ -175,6 +237,39 @@ class OutboxNativeControlClientTest {
 
         override fun readControlResponseFrame(): ByteArray? {
             return responses.removeFirstOrNull()
+        }
+
+        override fun close() = Unit
+    }
+
+    private class BlockingControlTransport : OutboxPipeTransport {
+        val blockingReadStarted = CountDownLatch(1)
+        val releaseBlockingRead = CountDownLatch(1)
+        val writtenCommandCount = AtomicInteger(0)
+        private val readCount = AtomicInteger(0)
+
+        override fun writeCommandEnvelope(envelope: ByteBuffer): Boolean {
+            writtenCommandCount.incrementAndGet()
+            return true
+        }
+
+        override fun readDoorbellFrame(): ByteArray? = null
+
+        override fun readControlResponseFrame(): ByteArray {
+            return when (readCount.incrementAndGet()) {
+                1 -> responseFrame(
+                    sequence = 1L,
+                    command = OutboxControlCommandEncoder.COMMAND_CONFIGURE,
+                )
+                else -> {
+                    blockingReadStarted.countDown()
+                    releaseBlockingRead.await(2, TimeUnit.SECONDS)
+                    responseFrame(
+                        sequence = 2L,
+                        command = OutboxControlCommandEncoder.COMMAND_FLUSH,
+                    )
+                }
+            }
         }
 
         override fun close() = Unit

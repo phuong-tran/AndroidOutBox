@@ -37,7 +37,8 @@ internal class OutboxNativePipeTransport private constructor(
      * Writes a complete command frame to the native control pipe.
      *
      * The command pipe is a single FIFO lane, so concurrent callers synchronize
-     * here before the control client waits for the matching response sequence.
+     * only while emitting one complete frame. One-way record writes release this
+     * lock immediately and never wait for a native response.
      */
     override fun writeCommandEnvelope(envelope: ByteBuffer): Boolean {
         return runCatching {

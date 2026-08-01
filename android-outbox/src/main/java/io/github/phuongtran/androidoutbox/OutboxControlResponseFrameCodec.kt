@@ -61,6 +61,9 @@ internal data class OutboxControlResponseFrame(
  */
 internal object OutboxControlResponseFrameCodec {
     fun decode(frame: ByteArray): OutboxControlResponseFrame? {
+        if (frame.size > OutboxConfig.MAX_PIPE_FRAME_BYTES) {
+            return null
+        }
         val buffer = ByteBuffer.wrap(frame).order(ByteOrder.LITTLE_ENDIAN)
         if (buffer.remaining() < HEADER_BYTES) {
             return null

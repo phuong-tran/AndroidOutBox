@@ -11,6 +11,9 @@ import java.nio.ByteOrder
  */
 internal object OutboxBatchFrameCodec {
     fun decode(body: ByteArray): OutboxBatch? {
+        if (body.size > OutboxConfig.MAX_PIPE_FRAME_BYTES) {
+            return null
+        }
         val buffer = ByteBuffer
             .wrap(body)
             .order(ByteOrder.LITTLE_ENDIAN)
@@ -22,7 +25,9 @@ internal object OutboxBatchFrameCodec {
         val recordCount = buffer.int
         if (
             ackTokenLength <= 0 ||
+            ackTokenLength > MAX_ACK_TOKEN_BYTES ||
             recordCount <= 0 ||
+            recordCount > OutboxRecordStore.MAX_BATCH_RECORDS ||
             ackTokenLength > buffer.remaining()
         ) {
             return null
@@ -54,4 +59,5 @@ internal object OutboxBatchFrameCodec {
 
     private const val HEADER_BYTES = 8
     private const val RECORD_LENGTH_BYTES = 4
+    private const val MAX_ACK_TOKEN_BYTES = 64
 }

@@ -46,6 +46,19 @@ int outbox_spool_has_unacked_records_locked(
 int outbox_spool_rotate_active_segment_locked(
     outbox_t* outbox);
 
+#if defined(OUTBOX_TESTING)
+typedef enum outbox_test_spool_fault_t {
+  OUTBOX_TEST_FAULT_FSYNC = 1,
+  OUTBOX_TEST_FAULT_CURSOR_OPEN = 2,
+  OUTBOX_TEST_FAULT_CURSOR_FSYNC = 3,
+  OUTBOX_TEST_FAULT_CURSOR_RENAME = 4,
+  OUTBOX_TEST_FAULT_CURSOR_DIRECTORY_SYNC = 5,
+  OUTBOX_TEST_FAULT_SEGMENT_ROTATE_OPEN = 6
+} outbox_test_spool_fault_t;
+
+void outbox_test_fail_next_spool_operation(outbox_test_spool_fault_t fault);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

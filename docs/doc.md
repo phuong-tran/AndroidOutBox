@@ -187,8 +187,10 @@ val batch = outbox.readNextBatch(
 ```
 
 `maxBytes` is a per-batch pull budget, not a pipe frame ceiling. The native/Kotlin
-fd protocol reads length-prefixed frames to completion; record size is bounded by
-`maxRecordBytes` before enqueueing.
+fd protocol reads length-prefixed frames to completion. Absolute allocation
+safety ceilings are 16 MiB and 4096 records per batch and 32 MiB per pipe frame;
+record size is separately bounded by the configured `maxRecordBytes` before
+enqueueing.
 
 The app can inspect, transform, or deliver the records. If delivery fails, the
 app should not ACK.
@@ -331,6 +333,14 @@ application.
 | `maxRecordBytes` | `4096` | Maximum UTF-8 payload size for one record. | Payloads at or above the limit are rejected in Kotlin before a command frame is allocated or written to native. AndroidOutBox does not split or partially write a record. |
 | `maxSegmentSizeBytes` | `524288` | Approximate size at which the active spool segment rotates. | The writer rolls to a new segment instead of growing the active segment indefinitely. |
 | `maxArchivedSegments` | `3` | Number of rolled segments retained beside the active segment. | Oldest archived segments are deleted when the retained segment count exceeds the configured budget. |
+
+Configuration also has absolute safety ceilings: `queueCapacity <= 65536`,
+`maxRecordBytes <= 4 MiB`, `maxSegmentSizeBytes <= 128 MiB`, and
+`maxArchivedSegments <= 255`. In addition, the queue configuration must fit a
+128 MiB native allocation budget and the approximate segment-retention product
+must fit a 1 GiB spool budget. That validation also accounts conservatively for
+a record larger than the configured segment rotation target. Invalid
+configurations fail before native queue or spool resources are allocated.
 
 The approximate disk budget is:
 
@@ -787,10 +797,10 @@ naturally.
 
 AndroidOutBox is intentionally bounded:
 
-- `queueCapacity` limits in-memory pressure
-- `maxRecordBytes` rejects oversized records before pipe/frame handoff
+- `queueCapacity` and its 128 MiB cross-budget limit in-memory pressure
+- `maxRecordBytes` and the 32 MiB frame ceiling reject oversized allocations
 - `maxSegmentSizeBytes` rolls spool segments
-- `maxArchivedSegments` caps retained files
+- `maxArchivedSegments` and the 1 GiB cross-budget cap retained storage
 
 The outbox is best-effort. It is designed to preserve useful recent records
 without risking app performance or unbounded disk growth. The documented loss
@@ -800,12 +810,16 @@ bounded, app-safe mobile logging.
 ### Threading
 
 `write()` is designed for concurrent producers and returns after handing the
-command frame to native. It does not wait for native enqueue confirmation or disk
-I/O on the caller thread.
+command frame to native. Concurrent producers serialize only while emitting a
+complete frame into the shared FIFO pipe; a write does not hold the
+command/response lock and does not wait for native enqueue confirmation or disk
+I/O. The API is intentionally synchronous and coroutine-neutral. Applications
+may call it from their chosen coroutine context when they do not want possible
+pipe backpressure on a particular thread.
 
-The control pipe itself is not capped at the default 64 KiB batch size. That
-default only keeps ordinary drain passes small; callers may request larger
-batches when their configured record and memory budgets allow it.
+The control pipe is not capped at the example 64 KiB batch size. That value only
+keeps ordinary drain passes small; callers may request larger batches up to the
+documented batch and frame safety ceilings.
 
 Control operations such as `start()`, `flush()`, `forceSync()`,
 `readNextBatch()`, `ack()`, `getStats()`, and `stop()` are serialized by the

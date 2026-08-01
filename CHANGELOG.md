@@ -2,6 +2,17 @@
 
 All notable project changes are documented here.
 
+## Unreleased
+
+- Kept concurrent writes on the ordered pipe hot path without waiting behind
+  command/response operations; JNI remains a thin file-descriptor bridge.
+- Added explicit queue, record, batch, frame, segment, and aggregate memory/disk
+  safety ceilings on both Kotlin and native boundaries.
+- Added deterministic malformed-frame/parser coverage and native filesystem
+  fault injection for append, sync, cursor commit, and segment rotation paths.
+- Added ThreadSanitizer host coverage beside ASan and UBSan; the new coverage
+  found and fixed a control-thread lifecycle leak.
+
 ## 1.3.9 - 2026-07-30
 
 - Published immutable static Maven artifacts under `maven/` for `1.3.9` and restored `1.3.8` to its original artifact checksum.

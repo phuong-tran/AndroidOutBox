@@ -13,11 +13,21 @@
 #define OUTBOX_DEFAULT_QUEUE_CAPACITY 256u
 #define OUTBOX_DEFAULT_RECORD_BYTES 4096u
 #define OUTBOX_DEFAULT_SEGMENT_SIZE_BYTES (512u * 1024u)
-/* The fd protocol must not encode business assumptions about payload size.
- * Keep the frame ceiling at the Kotlin ByteArray boundary, then let memory,
- * disk, and caller-provided outbox config decide whether a specific payload is
- * acceptable. */
-#define OUTBOX_MAX_PIPE_FRAME_BYTES 0x7fffffffu
+/* The fd protocol must not encode business assumptions about payload shape.
+ * Its absolute ceiling only prevents malformed or misconfigured peers from
+ * requesting process-threatening allocations; lower record and batch budgets
+ * still come from the caller-visible configuration. */
+#define OUTBOX_MAX_PIPE_FRAME_BYTES (32u * 1024u * 1024u)
+#define OUTBOX_MAX_QUEUE_CAPACITY 65536u
+#define OUTBOX_MAX_RECORD_BYTES (4u * 1024u * 1024u)
+#define OUTBOX_MAX_QUEUE_STORAGE_BYTES (128u * 1024u * 1024u)
+#define OUTBOX_MAX_SEGMENT_SIZE_BYTES (128ull * 1024ull * 1024ull)
+#define OUTBOX_MAX_ARCHIVED_SEGMENTS 255u
+#define OUTBOX_MAX_SPOOL_BYTES (1024ull * 1024ull * 1024ull)
+#define OUTBOX_MAX_SPOOL_RECORD_OVERHEAD_BYTES \
+  (OUTBOX_CATEGORY_CAPACITY + 192u)
+#define OUTBOX_MAX_BATCH_RECORDS 4096u
+#define OUTBOX_MAX_BATCH_BYTES (16u * 1024u * 1024u)
 #define OUTBOX_SEGMENT_NAME_CAPACITY 33u
 #define OUTBOX_SEGMENT_PREFIX "segment-"
 #define OUTBOX_SEGMENT_SUFFIX ".log"
@@ -76,6 +86,7 @@ typedef struct outbox_t {
   pthread_t control_thread;
   uint32_t writer_thread_started;
   uint32_t control_thread_started;
+  uint32_t control_thread_reap_claimed;
   uint32_t control_running;
   _Atomic uint32_t started;
   _Atomic uint32_t stop_requested;

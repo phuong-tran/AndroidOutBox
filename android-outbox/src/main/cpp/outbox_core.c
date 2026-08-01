@@ -78,6 +78,10 @@ static int size_multiply_overflows(size_t count, size_t item_size) {
   return item_size != 0u && count > SIZE_MAX / item_size;
 }
 
+static int size_add_overflows(size_t left, size_t right) {
+  return left > SIZE_MAX - right;
+}
+
 static void* zalloc_cacheline_aligned(size_t size) {
   void* data = NULL;
   if (size == 0u || posix_memalign(&data, OUTBOX_CACHELINE, size) != 0) {
@@ -272,6 +276,7 @@ outbox_status_t outbox_open_pipes(
   outbox_state.data_available_doorbell_pending = 0u;
   outbox_state.control_running = 1u;
   outbox_state.control_thread_started = 0u;
+  outbox_state.control_thread_reap_claimed = 0u;
   pthread_result = pthread_create(&outbox_state.control_thread,
                                   NULL,
                                   outbox_control_main,
@@ -281,6 +286,7 @@ outbox_status_t outbox_open_pipes(
     outbox_state.doorbell_write_fd = -1;
     outbox_state.record_write_fd = -1;
     outbox_state.control_running = 0u;
+    outbox_state.control_thread_reap_claimed = 0u;
     pthread_mutex_unlock(&outbox_state.mutex);
     close(command_pipe[0]);
     close(doorbell_pipe[1]);
@@ -303,7 +309,7 @@ outbox_status_t outbox_open_pipes(
 
 void outbox_close_pipes(void) {
   pthread_t control_thread;
-  uint32_t should_join = 0u;
+  uint32_t should_reap = 0u;
   int command_read_fd = -1;
   int doorbell_write_fd = -1;
   int record_write_fd = -1;
@@ -317,7 +323,19 @@ void outbox_close_pipes(void) {
   outbox_state.doorbell_write_fd = -1;
   outbox_state.record_write_fd = -1;
   outbox_state.data_available_doorbell_pending = 0u;
-  should_join = outbox_state.control_thread_started;
+  /* CLOSE_PIPES is handled by the control thread itself, while lifecycle
+   * teardown may close the same pipes from another thread. Exactly one caller
+   * must reap the pthread: the control thread detaches itself; an external
+   * caller joins it. Keep control_thread_started set until reaping completes so
+   * a new pipe generation cannot reuse this state too early. */
+  should_reap =
+      (outbox_state.control_thread_started != 0u &&
+       outbox_state.control_thread_reap_claimed == 0u)
+          ? 1u
+          : 0u;
+  if (should_reap != 0u) {
+    outbox_state.control_thread_reap_claimed = 1u;
+  }
   control_thread = outbox_state.control_thread;
   pthread_mutex_unlock(&outbox_state.mutex);
 
@@ -330,13 +348,20 @@ void outbox_close_pipes(void) {
   if (record_write_fd != -1) {
     close(record_write_fd);
   }
-  if (should_join != 0u && !pthread_equal(pthread_self(), control_thread)) {
-    pthread_join(control_thread, NULL);
+  if (should_reap != 0u) {
+    if (pthread_equal(pthread_self(), control_thread)) {
+      pthread_detach(control_thread);
+    } else {
+      pthread_join(control_thread, NULL);
+    }
   }
 
-  pthread_mutex_lock(&outbox_state.mutex);
-  outbox_state.control_thread_started = 0u;
-  pthread_mutex_unlock(&outbox_state.mutex);
+  if (should_reap != 0u) {
+    pthread_mutex_lock(&outbox_state.mutex);
+    outbox_state.control_thread_started = 0u;
+    outbox_state.control_thread_reap_claimed = 0u;
+    pthread_mutex_unlock(&outbox_state.mutex);
+  }
 }
 
 outbox_status_t outbox_start(
@@ -349,6 +374,8 @@ outbox_status_t outbox_start(
   uint64_t min_segment_id = 0u;
   uint64_t max_segment_id = 0u;
   uint32_t segment_count = 0u;
+  size_t queue_record_bytes = 0u;
+  uint64_t max_segment_footprint_bytes = 0u;
 
   /* Start can be called directly by C tests or indirectly from the pipe control
    * protocol. It rebuilds all in-memory state from the spool directory and
@@ -369,9 +396,20 @@ outbox_status_t outbox_start(
   max_segment_size_bytes = config->max_segment_size_bytes == 0u ? max_segment_size_bytes
                                                                 : config->max_segment_size_bytes;
   max_archived_segments = config->max_archived_segments;
+  max_segment_footprint_bytes =
+      (uint64_t)max_record_bytes + OUTBOX_MAX_SPOOL_RECORD_OVERHEAD_BYTES;
+  if (max_segment_footprint_bytes < max_segment_size_bytes) {
+    max_segment_footprint_bytes = max_segment_size_bytes;
+  }
   if (queue_capacity == 0u ||
       max_record_bytes == 0u ||
-      max_segment_size_bytes == 0u) {
+      max_segment_size_bytes == 0u ||
+      queue_capacity > OUTBOX_MAX_QUEUE_CAPACITY ||
+      max_record_bytes > OUTBOX_MAX_RECORD_BYTES ||
+      max_segment_size_bytes > OUTBOX_MAX_SEGMENT_SIZE_BYTES ||
+      max_archived_segments > OUTBOX_MAX_ARCHIVED_SEGMENTS ||
+      max_segment_footprint_bytes >
+          OUTBOX_MAX_SPOOL_BYTES / ((uint64_t)max_archived_segments + 1u)) {
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
@@ -407,7 +445,17 @@ outbox_status_t outbox_start(
       outbox_spool_line_buffer_capacity(max_record_bytes);
   outbox_state.payload_slot_bytes = align_up_size((size_t)max_record_bytes, OUTBOX_CACHELINE);
   if (outbox_state.payload_slot_bytes == 0u ||
-      size_multiply_overflows((size_t)queue_capacity, outbox_state.payload_slot_bytes)) {
+      size_add_overflows(outbox_state.payload_slot_bytes, OUTBOX_CATEGORY_SLOT_BYTES) ||
+      size_add_overflows(outbox_state.payload_slot_bytes + OUTBOX_CATEGORY_SLOT_BYTES,
+                         sizeof(*outbox_state.slots))) {
+    pthread_mutex_unlock(&outbox_state.mutex);
+    return OUTBOX_STATUS_INVALID_ARGUMENT;
+  }
+  queue_record_bytes = outbox_state.payload_slot_bytes +
+                       OUTBOX_CATEGORY_SLOT_BYTES +
+                       sizeof(*outbox_state.slots);
+  if (size_multiply_overflows((size_t)queue_capacity, queue_record_bytes) ||
+      (size_t)queue_capacity * queue_record_bytes > OUTBOX_MAX_QUEUE_STORAGE_BYTES) {
     pthread_mutex_unlock(&outbox_state.mutex);
     return OUTBOX_STATUS_INVALID_ARGUMENT;
   }
@@ -528,12 +576,12 @@ outbox_status_t outbox_log(
 
   category_length = bounded_strlen(category, OUTBOX_CATEGORY_CAPACITY - 1u);
   if (!outbox_queue_try_enqueue_record(&outbox_state,
-                                                     level,
-                                                     category,
-                                                     category_length,
-                                                     payload,
-                                                     payload_length,
-                                                     wall_time_unix_ms)) {
+                                       level,
+                                       category,
+                                       category_length,
+                                       payload,
+                                       payload_length,
+                                       wall_time_unix_ms)) {
     atomic_fetch_add_explicit(&outbox_state.dropped_queue_full_count, 1u, memory_order_relaxed);
     outbox_queue_leave_producer(&outbox_state);
     notify_doorbell(OUTBOX_DOORBELL_DROPPED_RECORD);

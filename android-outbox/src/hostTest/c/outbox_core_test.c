@@ -1,4 +1,7 @@
 #include "outbox_core.h"
+#include "outbox_control.h"
+#include "outbox_spool.h"
+#include "outbox_writer.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -95,6 +98,15 @@ typedef struct test_report_t {
 } test_report_t;
 
 static test_report_t test_report = {};
+
+static uint32_t next_fuzz_value(uint32_t* state) {
+  uint32_t value = *state;
+  value ^= value << 13u;
+  value ^= value >> 17u;
+  value ^= value << 5u;
+  *state = value;
+  return value;
+}
 
 static int remove_tree(const char* path) {
   DIR* dir = opendir(path);
@@ -794,11 +806,16 @@ static int test_ack_requires_existing_provider_cursor(void) {
 }
 
 static int test_ack_retry_persists_after_cursor_write_failure(void) {
+  const outbox_test_spool_fault_t faults[] = {
+      OUTBOX_TEST_FAULT_CURSOR_OPEN,
+      OUTBOX_TEST_FAULT_CURSOR_FSYNC,
+      OUTBOX_TEST_FAULT_CURSOR_RENAME,
+      OUTBOX_TEST_FAULT_CURSOR_DIRECTORY_SYNC,
+  };
   test_context_t context = {};
   outbox_record_batch_t batch = {};
-  char cursor_dir[512] = {};
   char* ack_token = NULL;
-  outbox_status_t ack_status = OUTBOX_STATUS_OK;
+  uint32_t fault_index = 0u;
   ASSERT_TRUE(setup_context(&context));
   ASSERT_TRUE(start_logger(&context));
   ASSERT_TRUE(log_and_flush("network.http", "first"));
@@ -810,11 +827,15 @@ static int test_ack_retry_persists_after_cursor_write_failure(void) {
   ASSERT_TRUE(ack_token != NULL);
   outbox_free_record_batch(&batch);
 
-  snprintf(cursor_dir, sizeof(cursor_dir), "%s/cursors", context.spool_dir);
-  ASSERT_TRUE(chmod(cursor_dir, 0500) == 0);
-  ack_status = outbox_ack(TEST_PRIMARY_PROVIDER_ID, ack_token);
-  ASSERT_TRUE(chmod(cursor_dir, 0700) == 0);
-  ASSERT_TRUE(ack_status == OUTBOX_STATUS_INTERNAL_ERROR);
+  for (fault_index = 0u; fault_index < sizeof(faults) / sizeof(faults[0]); ++fault_index) {
+    outbox_test_fail_next_spool_operation(faults[fault_index]);
+    ASSERT_TRUE(outbox_ack(TEST_PRIMARY_PROVIDER_ID, ack_token) ==
+                OUTBOX_STATUS_INTERNAL_ERROR);
+    ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
+    ASSERT_TRUE(batch.record_count == 1u);
+    ASSERT_TRUE(strstr(batch.records[0], "first") != NULL);
+    outbox_free_record_batch(&batch);
+  }
 
   ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, ack_token));
   free(ack_token);
@@ -825,6 +846,96 @@ static int test_ack_retry_persists_after_cursor_write_failure(void) {
   ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 1u, 4096u, &batch));
   ASSERT_TRUE(batch.record_count == 0u);
   outbox_free_record_batch(&batch);
+
+  teardown_context(&context);
+  return 0;
+}
+
+static int test_injected_record_append_failure_is_counted_and_recoverable(void) {
+  test_context_t context = {};
+  outbox_record_batch_t batch = {};
+  outbox_stats_t stats = {};
+  ASSERT_TRUE(setup_context(&context));
+  ASSERT_TRUE(start_logger(&context));
+
+  outbox_test_fail_next_record_append();
+  ASSERT_STATUS_OK(outbox_log(4, "storage.append", "injected-failure"));
+  ASSERT_STATUS_OK(outbox_flush());
+  outbox_get_stats(&stats);
+  ASSERT_TRUE(stats.accepted_count == 1u);
+  ASSERT_TRUE(stats.written_count == 0u);
+  ASSERT_TRUE(stats.write_failure_count == 1u);
+
+  ASSERT_TRUE(log_and_flush("storage.append", "recovered"));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 4u, 4096u, &batch));
+  ASSERT_TRUE(batch.record_count == 1u);
+  ASSERT_TRUE(strstr(batch.records[0], "recovered") != NULL);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, batch.ack_token));
+  outbox_free_record_batch(&batch);
+  teardown_context(&context);
+  return 0;
+}
+
+static int test_injected_fsync_and_rotation_failures_recover(void) {
+  test_context_t context = {};
+  outbox_config_t config = {};
+  outbox_record_batch_t batch = {};
+  outbox_stats_t stats = {};
+  ASSERT_TRUE(setup_context(&context));
+  config = config_for(&context);
+  config.max_segment_size_bytes = 1u;
+  ASSERT_STATUS_OK(outbox_start(&config));
+  ASSERT_TRUE(log_and_flush("storage.rotate", "first"));
+
+  outbox_test_fail_next_spool_operation(OUTBOX_TEST_FAULT_FSYNC);
+  ASSERT_TRUE(outbox_force_sync() == OUTBOX_STATUS_INTERNAL_ERROR);
+  ASSERT_STATUS_OK(outbox_force_sync());
+
+  outbox_test_fail_next_spool_operation(OUTBOX_TEST_FAULT_SEGMENT_ROTATE_OPEN);
+  ASSERT_TRUE(log_and_flush("storage.rotate", "rotation-failure"));
+  outbox_get_stats(&stats);
+  ASSERT_TRUE(stats.write_failure_count == 1u);
+
+  ASSERT_TRUE(log_and_flush("storage.rotate", "recovered"));
+  ASSERT_STATUS_OK(outbox_read_next_batch(TEST_PRIMARY_PROVIDER_ID, 4u, 4096u, &batch));
+  ASSERT_TRUE(batch.record_count == 2u);
+  ASSERT_TRUE(strstr(batch.records[0], "first") != NULL);
+  ASSERT_TRUE(strstr(batch.records[1], "recovered") != NULL);
+  ASSERT_STATUS_OK(outbox_ack(TEST_PRIMARY_PROVIDER_ID, batch.ack_token));
+  outbox_free_record_batch(&batch);
+  teardown_context(&context);
+  return 0;
+}
+
+static int test_configuration_hard_limits_reject_unsafe_allocations(void) {
+  test_context_t context = {};
+  outbox_config_t config = {};
+  ASSERT_TRUE(setup_context(&context));
+
+  config = config_for(&context);
+  config.queue_capacity = OUTBOX_MAX_QUEUE_CAPACITY + 1u;
+  ASSERT_TRUE(outbox_start(&config) == OUTBOX_STATUS_INVALID_ARGUMENT);
+
+  config = config_for(&context);
+  config.max_record_bytes = OUTBOX_MAX_RECORD_BYTES + 1u;
+  ASSERT_TRUE(outbox_start(&config) == OUTBOX_STATUS_INVALID_ARGUMENT);
+
+  config = config_for(&context);
+  config.queue_capacity = 64u;
+  config.max_record_bytes = OUTBOX_MAX_RECORD_BYTES;
+  ASSERT_TRUE(outbox_start(&config) == OUTBOX_STATUS_INVALID_ARGUMENT);
+
+  config = config_for(&context);
+  config.max_segment_size_bytes = OUTBOX_MAX_SEGMENT_SIZE_BYTES;
+  config.max_archived_segments = OUTBOX_MAX_ARCHIVED_SEGMENTS;
+  ASSERT_TRUE(outbox_start(&config) == OUTBOX_STATUS_INVALID_ARGUMENT);
+
+  config = config_for(&context);
+  config.queue_capacity = 8u;
+  config.max_record_bytes = OUTBOX_MAX_RECORD_BYTES;
+  config.max_segment_size_bytes = 1u;
+  config.max_archived_segments = OUTBOX_MAX_ARCHIVED_SEGMENTS;
+  ASSERT_TRUE(outbox_start(&config) == OUTBOX_STATUS_INVALID_ARGUMENT);
 
   teardown_context(&context);
   return 0;
@@ -1192,6 +1303,50 @@ static int test_concurrent_stop_is_idempotent(void) {
   return 0;
 }
 
+static int test_native_parsers_reject_deterministic_malformed_corpus(void) {
+  enum {
+    CORPUS_CASES = 20000,
+    MAX_FRAME_BYTES = 512,
+  };
+  uint32_t random_state = 0x414F4258u;
+  uint8_t frame[MAX_FRAME_BYTES] = {};
+  char cursor_token[OUTBOX_CURSOR_TOKEN_CAPACITY + 1u] = {};
+  uint32_t case_index = 0u;
+
+  for (case_index = 0u; case_index < CORPUS_CASES; ++case_index) {
+    const uint32_t frame_length = next_fuzz_value(&random_state) % (MAX_FRAME_BYTES + 1u);
+    uint64_t segment_id = 0u;
+    uint64_t offset = 0u;
+    uint32_t byte_index = 0u;
+    outbox_status_t status;
+    int parsed_cursor = 0;
+
+    for (byte_index = 0u; byte_index < frame_length; ++byte_index) {
+      frame[byte_index] = (uint8_t)next_fuzz_value(&random_state);
+    }
+    status = outbox_control_validate_command_frame(frame, frame_length);
+    ASSERT_TRUE(status == OUTBOX_STATUS_OK || status == OUTBOX_STATUS_INVALID_ARGUMENT);
+
+    const uint32_t token_length =
+        next_fuzz_value(&random_state) % OUTBOX_CURSOR_TOKEN_CAPACITY;
+    for (byte_index = 0u; byte_index < token_length; ++byte_index) {
+      cursor_token[byte_index] = (char)(1u + (next_fuzz_value(&random_state) % 126u));
+    }
+    cursor_token[token_length] = '\0';
+    parsed_cursor = outbox_spool_parse_cursor_token(cursor_token, &segment_id, &offset);
+    ASSERT_TRUE(parsed_cursor == 0 || parsed_cursor == 1);
+  }
+
+  memset(frame, 0, sizeof(frame));
+  write_u32_le(frame, TEST_CONTROL_MAGIC);
+  write_u32_le(frame + 4u, TEST_CONTROL_VERSION);
+  write_u32_le(frame + 8u, TEST_CONTROL_COMMAND_FLUSH);
+  write_u32_le(frame + 12u, 0u);
+  write_u64_le(frame + 16u, 1u);
+  ASSERT_STATUS_OK(outbox_control_validate_command_frame(frame, TEST_CONTROL_HEADER_BYTES));
+  return 0;
+}
+
 int main(void) {
   ASSERT_TRUE(test_unacked_batch_survives_restart() == 0);
   ASSERT_TRUE(test_open_pipes_reports_existing_backlog() == 0);
@@ -1199,6 +1354,9 @@ int main(void) {
   ASSERT_TRUE(test_provider_cursors_are_independent() == 0);
   ASSERT_TRUE(test_ack_requires_existing_provider_cursor() == 0);
   ASSERT_TRUE(test_ack_retry_persists_after_cursor_write_failure() == 0);
+  ASSERT_TRUE(test_injected_record_append_failure_is_counted_and_recoverable() == 0);
+  ASSERT_TRUE(test_injected_fsync_and_rotation_failures_recover() == 0);
+  ASSERT_TRUE(test_configuration_hard_limits_reject_unsafe_allocations() == 0);
   ASSERT_TRUE(test_data_available_doorbell_is_coalesced_until_batch_read() == 0);
   ASSERT_TRUE(test_control_pipe_accepts_log_command_frame() == 0);
   ASSERT_TRUE(test_control_pipe_force_syncs_active_segment() == 0);
@@ -1208,6 +1366,7 @@ int main(void) {
   ASSERT_TRUE(test_concurrent_producers_flush_all_records() == 0);
   ASSERT_TRUE(test_large_payload_round_trips_through_spool() == 0);
   ASSERT_TRUE(test_concurrent_stop_is_idempotent() == 0);
+  ASSERT_TRUE(test_native_parsers_reject_deterministic_malformed_corpus() == 0);
   fprintf(stdout,
           "{\n"
           "  \"test\": \"android_outbox_core_test\",\n"

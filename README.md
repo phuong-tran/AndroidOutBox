@@ -148,9 +148,11 @@ Payloads whose UTF-8 size reaches `maxRecordBytes` are rejected on the Kotlin
 side before a command frame is allocated or written to the pipe. Categories are
 bounded to `OutboxConfig.MAX_CATEGORY_BYTES` UTF-8 bytes.
 
-The `64 * 1024` value above is only a default batch pull budget. Pipe frames are
-length-prefixed and read to completion; oversized records are rejected at the
-write/config boundary instead of by a 64 KiB pipe ceiling.
+The `64 * 1024` value above is only an example batch pull budget. Pipe frames
+are length-prefixed and read to completion. Independent hard safety ceilings
+reject malformed or dangerously large requests: 32 MiB per pipe frame, 16 MiB
+and 4096 records per batch, and 4 MiB per configured record. Normal applications
+should keep their configured budgets far below those absolute ceilings.
 
 For production sinks, centralize read/send/ACK ownership with
 `AndroidOutboxSinkRunner`:
@@ -249,10 +251,11 @@ Run lint and build the release AAR:
 ./gradlew :android-outbox:lintRelease :android-outbox:assembleRelease --console=plain
 ```
 
-Native smoke, ASan/UBSan, stress, host JNI, and shutdown race diagnostics are
-documented in [docs/testing.md](docs/testing.md). Explicit local tasks keep the
-normal developer loop small; CI runs the smoke, host JNI, ASan, and UBSan
-coverage automatically.
+Native smoke, ASan/UBSan/TSan, parser robustness, deterministic filesystem fault
+injection, stress, host JNI, and shutdown race diagnostics are documented in
+[docs/testing.md](docs/testing.md). Explicit local tasks keep the normal
+developer loop small; CI runs smoke, host JNI, and all three sanitizers
+automatically.
 
 ## Build
 

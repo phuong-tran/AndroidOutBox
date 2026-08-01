@@ -8,6 +8,22 @@
 #include <stdatomic.h>
 #include <stdio.h>
 
+#if defined(OUTBOX_TESTING)
+static _Atomic uint32_t outbox_test_fail_record_append = 0u;
+
+void outbox_test_fail_next_record_append(void) {
+  atomic_store_explicit(&outbox_test_fail_record_append, 1u, memory_order_release);
+}
+
+static int consume_test_record_append_failure(void) {
+  return atomic_exchange_explicit(&outbox_test_fail_record_append,
+                                  0u,
+                                  memory_order_acq_rel) != 0u;
+}
+#else
+#define consume_test_record_append_failure() 0
+#endif
+
 static int format_line_into(const outbox_slot_t* slot,
                             const char* category,
                             const char* payload,
@@ -111,6 +127,7 @@ void* outbox_writer_main(void* opaque) {
      * handed the record to this background writer, so holding the spool mutex
      * during disk I/O does not put file syscalls back on the caller hotpath. */
     if (outbox->active_fd >= 0 &&
+        !consume_test_record_append_failure() &&
         outbox_write_all_bytes(outbox->active_fd, line, line_length)) {
       outbox->current_file_size_bytes += (uint64_t)line_length;
       atomic_fetch_add_explicit(&outbox->written_count, 1u, memory_order_relaxed);
