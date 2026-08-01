@@ -1,0 +1,110 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "io.github.phuongtran",
+    "module": "android-outbox",
+    "version": "1.3.10",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.5.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "android-outbox-1.3.10.aar",
+          "url": "android-outbox-1.3.10.aar",
+          "size": 150374,
+          "sha512": "a068efb4bed6b13d48ecff4739870fa066115b54d3a924dc26068f58f1128124dfb0dc10620ce1897566889dee14c4b15be9ee4e79852018e5ddc6c8699ebbd7",
+          "sha256": "3816bcf33df1682bd04b8b54df3e4e67c4821ec79d8b6d72d9c4cf2d6ed17d2c",
+          "sha1": "77d0b081b46c48b48f125df50009e404081a530e",
+          "md5": "ae974eed86bf752e61bfa1b92bbeb73b"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "android-outbox-1.3.10.aar",
+          "url": "android-outbox-1.3.10.aar",
+          "size": 150374,
+          "sha512": "a068efb4bed6b13d48ecff4739870fa066115b54d3a924dc26068f58f1128124dfb0dc10620ce1897566889dee14c4b15be9ee4e79852018e5ddc6c8699ebbd7",
+          "sha256": "3816bcf33df1682bd04b8b54df3e4e67c4821ec79d8b6d72d9c4cf2d6ed17d2c",
+          "sha1": "77d0b081b46c48b48f125df50009e404081a530e",
+          "md5": "ae974eed86bf752e61bfa1b92bbeb73b"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "android-outbox-1.3.10-sources.jar",
+          "url": "android-outbox-1.3.10-sources.jar",
+          "size": 25397,
+          "sha512": "34adbc5e8e7978aa7611257986cd4d3b23bd6e75a3502a206da64ca6def77669923e6b180b597fe495cac0ca543bb656e9ee4619459cd7ee6d5d73ff9b0009cb",
+          "sha256": "68085b26e6573329f993422907e8389901cf97ad7cdbbb36cb0127865d2914c7",
+          "sha1": "44774afe2dbd6ae84c5acbd042bfdeb2d99d7da8",
+          "md5": "5908858a699e9666e280667bfdcb4414"
+        }
+      ]
+    }
+  ]
+}
